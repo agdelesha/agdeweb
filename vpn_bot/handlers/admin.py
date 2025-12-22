@@ -1083,8 +1083,19 @@ async def admin_approve_config_request(callback: CallbackQuery, bot: Bot):
         user_username = user.username
         config_count = len(user.configs)
     
+    # Извлекаем название устройства из сообщения
+    import re
+    device_match = re.search(r'🖥 Устройство: \*(.+?)\*', callback.message.text)
+    device_name = device_match.group(1) if device_match else None
+    
+    # Формируем имя конфига: username_device или username_номер
     base_name = user_username if user_username else str(user_telegram_id)
-    config_name = f"{base_name}{config_count + 1}" if config_count > 0 else base_name
+    if device_name:
+        # Очищаем название устройства от спецсимволов для имени файла
+        clean_device = re.sub(r'[^\w\s-]', '', device_name).strip().replace(' ', '_')[:20]
+        config_name = f"{base_name}_{clean_device}"
+    else:
+        config_name = f"{base_name}_{config_count + 1}"
     
     success, config_data, msg = await WireGuardService.create_config(config_name)
     
