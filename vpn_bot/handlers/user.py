@@ -976,6 +976,10 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
         reply_markup=get_main_menu_kb(message.from_user.id, True)
     )
     
+    # Экранируем специальные символы Markdown в названии устройства
+    import re
+    safe_device_name = re.sub(r'([_*\[\]()~`>#+=|{}.!-])', r'\\\1', device_name)
+    
     await bot.send_message(
         ADMIN_ID,
         f"📱 *Запрос дополнительного конфига*\n\n"
@@ -983,7 +987,7 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
         f"🆔 ID: `{message.from_user.id}`\n"
         f"{phone_info}\n"
         f"📱 Текущие конфиги ({config_count}): {configs_info}\n\n"
-        f"🖥 Устройство: *{device_name}*",
+        f"🖥 Устройство: *{safe_device_name}*",
         parse_mode="Markdown",
         reply_markup=get_config_request_kb(user_id)
     )
