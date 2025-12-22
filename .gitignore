@@ -1,0 +1,35 @@
+# Environment variables
+.env
+vpn_bot/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Database
+*.db
+vpn_bot/*.db
+
+# macOS
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak
