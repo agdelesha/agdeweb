@@ -18,7 +18,7 @@ from keyboards.user_kb import (
 from states.user_states import PaymentStates, RegistrationStates, ConfigRequestStates
 from services.wireguard import WireGuardService
 from services.ocr import OCRService
-from services.settings import is_password_required, is_channel_required, get_bot_password
+from services.settings import is_password_required, is_channel_required, get_bot_password, is_phone_required
 from keyboards.admin_kb import get_payment_review_kb, get_config_request_kb, get_check_subscription_kb
 
 CHANNEL_USERNAME = "agdevpn"
@@ -111,7 +111,7 @@ def get_phone_keyboard() -> ReplyKeyboardMarkup:
 @router.message(Command("about"))
 async def cmd_about(message: Message):
     await message.answer(
-        "🌐 Простой незаметный турецкий VPN со встроенной блокировкой рекламы.\n\n"
+        "🌐 Простой незаметный турецкий блокировщик рекламы.\n\n"
         "📩 Связь со мной: @agdelesha",
         parse_mode="Markdown"
     )
@@ -154,22 +154,34 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
                 await state.update_data(after_subscription="registration")
                 return
         
+        # Проверяем, нужен ли запрос телефона
+        if await is_phone_required():
+            msg = await message.answer(
+                f"👋 Привет, *{message.from_user.first_name}*!\n\n"
+                "Это бот для блокировки рекламы.\n\n"
+                "📱 Пожалуйста, поделитесь номером телефона для связи:\n"
+                "(или нажмите 'Пропустить')",
+                parse_mode="Markdown",
+                reply_markup=get_phone_keyboard()
+            )
+            await save_bot_message(state, msg.message_id)
+            await state.set_state(RegistrationStates.waiting_for_phone)
+            return
+        
+        # Телефон не требуется — сразу в главное меню
         msg = await message.answer(
             f"👋 Привет, *{message.from_user.first_name}*!\n\n"
-            "Это бот для получения VPN-конфигов.\n\n"
-            "📱 Пожалуйста, поделитесь номером телефона для связи:\n"
-            "(или нажмите 'Пропустить')",
+            "🛡️ Блокировщик рекламы, да и всего-то",
             parse_mode="Markdown",
-            reply_markup=get_phone_keyboard()
+            reply_markup=get_main_menu_kb(message.from_user.id, False)
         )
         await save_bot_message(state, msg.message_id)
-        await state.set_state(RegistrationStates.waiting_for_phone)
         return
     
     has_sub = await check_has_subscription(message.from_user.id)
     msg = await message.answer(
         f"👋 С возвращением, *{message.from_user.first_name}*!\n\n"
-        "� Немного свободного интернета?",
+        "🛡️ Блокировщик рекламы, да и всего-то",
         parse_mode="Markdown",
         reply_markup=get_main_menu_kb(message.from_user.id, has_sub)
     )
@@ -207,15 +219,28 @@ async def process_password(message: Message, state: FSMContext, bot: Bot):
             await state.set_state(None)
             return
     
+    # Проверяем, нужен ли запрос телефона
+    if await is_phone_required():
+        msg = await message.answer(
+            "✅ Пароль принят!\n\n"
+            "📱 Пожалуйста, поделитесь номером телефона для связи:\n"
+            "(или нажмите 'Пропустить')",
+            parse_mode="Markdown",
+            reply_markup=get_phone_keyboard()
+        )
+        await save_bot_message(state, msg.message_id)
+        await state.set_state(RegistrationStates.waiting_for_phone)
+        return
+    
+    # Телефон не требуется — сразу в главное меню
     msg = await message.answer(
         "✅ Пароль принят!\n\n"
-        "📱 Пожалуйста, поделитесь номером телефона для связи:\n"
-        "(или нажмите 'Пропустить')",
+        "🛡️ Блокировщик рекламы, да и всего-то",
         parse_mode="Markdown",
-        reply_markup=get_phone_keyboard()
+        reply_markup=get_main_menu_kb(message.from_user.id, False)
     )
     await save_bot_message(state, msg.message_id)
-    await state.set_state(RegistrationStates.waiting_for_phone)
+    await state.clear()
 
 
 @router.callback_query(F.data == "check_subscription")
@@ -230,18 +255,29 @@ async def check_subscription_callback(callback: CallbackQuery, state: FSMContext
     after_subscription = data.get("after_subscription")
     
     if after_subscription == "registration":
-        await callback.message.edit_text(
-            "✅ Подписка подтверждена!\n\n"
-            "📱 Пожалуйста, поделитесь номером телефона для связи:\n"
-            "(или нажмите 'Пропустить')",
-            parse_mode="Markdown"
-        )
-        msg = await callback.message.answer(
-            "⬇️ Нажмите кнопку ниже:",
-            reply_markup=get_phone_keyboard()
-        )
-        await save_bot_message(state, msg.message_id)
-        await state.set_state(RegistrationStates.waiting_for_phone)
+        # Проверяем, нужен ли запрос телефона
+        if await is_phone_required():
+            await callback.message.edit_text(
+                "✅ Подписка подтверждена!\n\n"
+                "📱 Пожалуйста, поделитесь номером телефона для связи:\n"
+                "(или нажмите 'Пропустить')",
+                parse_mode="Markdown"
+            )
+            msg = await callback.message.answer(
+                "⬇️ Нажмите кнопку ниже:",
+                reply_markup=get_phone_keyboard()
+            )
+            await save_bot_message(state, msg.message_id)
+            await state.set_state(RegistrationStates.waiting_for_phone)
+        else:
+            # Телефон не требуется — сразу в главное меню
+            await state.clear()
+            await callback.message.edit_text(
+                "✅ Подписка подтверждена!\n\n"
+                "🛡️ Блокировщик рекламы, да и всего-то",
+                parse_mode="Markdown",
+                reply_markup=get_main_menu_kb(callback.from_user.id, False)
+            )
     elif after_subscription == "extend":
         await state.clear()
         await callback.message.edit_text(
@@ -267,7 +303,7 @@ async def check_subscription_callback(callback: CallbackQuery, state: FSMContext
         has_sub = await check_has_subscription(callback.from_user.id)
         await callback.message.edit_text(
             "✅ Подписка подтверждена!\n\n"
-            "� Немного свободного интернета?",
+            "🛡️ Блокировщик рекламы, да и всего-то",
             parse_mode="Markdown",
             reply_markup=get_main_menu_kb(callback.from_user.id, has_sub)
         )
@@ -290,14 +326,14 @@ async def process_phone_contact(message: Message, state: FSMContext, bot: Bot):
     
     # Отправляем главное меню с удалением Reply клавиатуры
     msg = await message.answer(
-        "� Немного свободного интернета?",
+        "🛡️ Блокировщик рекламы, да и всего-то",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardRemove()
     )
     # Удаляем это сообщение и отправляем с inline-кнопками
     await bot.delete_message(message.chat.id, msg.message_id)
     msg2 = await message.answer(
-        "� Немного свободного интернета?",
+        "🛡️ Блокировщик рекламы, да и всего-то",
         parse_mode="Markdown",
         reply_markup=get_main_menu_kb(message.from_user.id, False)
     )
@@ -320,14 +356,14 @@ async def skip_phone(message: Message, state: FSMContext, bot: Bot):
     
     # Отправляем главное меню с удалением Reply клавиатуры
     msg = await message.answer(
-        "� Немного свободного интернета?",
+        "🛡️ Блокировщик рекламы, да и всего-то",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardRemove()
     )
     # Удаляем это сообщение и отправляем с inline-кнопками
     await bot.delete_message(message.chat.id, msg.message_id)
     msg2 = await message.answer(
-        "� Немного свободного интернета?",
+        "🛡️ Блокировщик рекламы, да и всего-то",
         parse_mode="Markdown",
         reply_markup=get_main_menu_kb(message.from_user.id, False)
     )
@@ -337,10 +373,11 @@ async def skip_phone(message: Message, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     await state.clear()
     has_sub = await check_has_subscription(callback.from_user.id)
     await callback.message.edit_text(
-        "� Немного свободного интернета?",
+        "🛡️ Блокировщик рекламы, да и всего-то",
         parse_mode="Markdown",
         reply_markup=get_main_menu_kb(callback.from_user.id, has_sub)
     )
@@ -348,15 +385,16 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "get_vpn")
 async def get_vpn(callback: CallbackQuery):
+    await callback.answer()
     user = await get_user_by_telegram_id(callback.from_user.id)
     show_trial = not user.trial_used if user else True
     
     await callback.message.edit_text(
         "📋 *Выберите тарифный план:*\n\n"
         "🎁 Пробный — 7 дней бесплатно (один раз)\n"
-        "📅 1 месяц — 100₽\n"
-        "📅 3 месяца — 200₽\n"
-        "📅 6 месяцев — 300₽",
+        "📅 30 дней — 100₽\n"
+        "📅 90 дней — 200₽\n"
+        "📅 180 дней — 300₽",
         parse_mode="Markdown",
         reply_markup=get_tariffs_kb(show_trial=show_trial)
     )
@@ -364,6 +402,7 @@ async def get_vpn(callback: CallbackQuery):
 
 @router.callback_query(F.data == "extend_subscription")
 async def extend_subscription(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    await callback.answer()
     # Проверяем подписку на канал
     if await is_channel_required():
         is_subscribed = await check_channel_subscription(bot, callback.from_user.id)
@@ -439,31 +478,23 @@ async def tariff_trial(callback: CallbackQuery, bot: Bot):
         await callback.message.edit_text(
             "✅ *Пробный период активирован!*\n\n"
             f"📅 Действует до: {expires_at.strftime('%d.%m.%Y')}\n\n"
-            "Сейчас отправлю вам конфиг и QR-код.",
+            "Сейчас отправлю вам конфиг.",
             parse_mode="Markdown"
         )
         
         if not LOCAL_MODE:
             config_path = WireGuardService.get_config_file_path(config_name)
-            qr_path = WireGuardService.get_qr_file_path(config_name)
             
             if os.path.exists(config_path):
                 await bot.send_document(
                     callback.from_user.id,
                     FSInputFile(config_path),
-                    caption="📄 Ваш WireGuard конфиг"
-                )
-            
-            if os.path.exists(qr_path):
-                await bot.send_photo(
-                    callback.from_user.id,
-                    FSInputFile(qr_path),
-                    caption="📷 QR-код для быстрой настройки"
+                    caption="📄 Ваш WireGuard конфиг\n\n📷 Если нужен QR-код, его можно найти в кнопке \"Конфиги\""
                 )
         else:
             await bot.send_message(
                 callback.from_user.id,
-                "🔧 [LOCAL_MODE] Конфиг и QR-код будут отправлены на сервере"
+                "🔧 [LOCAL_MODE] Конфиг будет отправлен на сервере"
             )
         
         await bot.send_message(
@@ -476,6 +507,7 @@ async def tariff_trial(callback: CallbackQuery, bot: Bot):
 
 @router.callback_query(F.data.startswith("tariff_"))
 async def tariff_selected(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     tariff_key = callback.data.replace("tariff_", "")
     
     if tariff_key not in TARIFFS:
@@ -504,6 +536,7 @@ async def tariff_selected(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "send_receipt")
 async def send_receipt(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     await state.set_state(PaymentStates.waiting_for_receipt)
     await callback.message.edit_text(
         "📸 *Отправьте фото чека об оплате*\n\n"
@@ -514,11 +547,12 @@ async def send_receipt(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "cancel_payment")
 async def cancel_payment(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     await state.clear()
     has_sub = await check_has_subscription(callback.from_user.id)
     await callback.message.edit_text(
         "❌ Оплата отменена\n\n"
-        "� Немного свободного интернета?",
+        "🛡️ Блокировщик рекламы, да и всего-то",
         parse_mode="Markdown",
         reply_markup=get_main_menu_kb(callback.from_user.id, has_sub)
     )
@@ -663,20 +697,12 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
         
         if config_created and not LOCAL_MODE:
             config_path = WireGuardService.get_config_file_path(config_name)
-            qr_path = WireGuardService.get_qr_file_path(config_name)
             
             if os.path.exists(config_path):
                 await bot.send_document(
                     user_telegram_id,
                     FSInputFile(config_path),
-                    caption="📄 Ваш WireGuard конфиг"
-                )
-            
-            if os.path.exists(qr_path):
-                await bot.send_photo(
-                    user_telegram_id,
-                    FSInputFile(qr_path),
-                    caption="📷 QR-код для быстрой настройки"
+                    caption="📄 Ваш WireGuard конфиг\n\n📷 Если нужен QR-код, его можно найти в кнопке \"Конфиги\""
                 )
         
         await message.answer(
@@ -704,8 +730,7 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
         await message.answer(
             "✅ *Чек получен!*\n\n"
             "Сумма не распознана автоматически.\n"
-            "Ваш платёж отправлен на проверку администратору.\n"
-            "Вы получите уведомление после подтверждения.",
+            "Мы проверим его вручную и скоро напишем!",
             parse_mode="Markdown",
             reply_markup=get_main_menu_kb(user_telegram_id, has_sub)
         )
@@ -729,6 +754,7 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data == "my_configs")
 async def my_configs(callback: CallbackQuery):
+    await callback.answer()
     async with async_session() as session:
         stmt = select(User).where(
             User.telegram_id == callback.from_user.id
@@ -739,7 +765,7 @@ async def my_configs(callback: CallbackQuery):
         if not user or not user.configs:
             await callback.message.edit_text(
                 "📭 У вас пока нет конфигов.\n\n"
-                "Получите VPN, чтобы создать первый конфиг.",
+                "Нажми \"Получить конфиг\", чтобы начать.",
                 reply_markup=get_back_kb()
             )
             return
@@ -755,6 +781,7 @@ async def my_configs(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("config_"))
 async def config_detail(callback: CallbackQuery):
+    await callback.answer()
     config_id = int(callback.data.replace("config_", ""))
     
     async with async_session() as session:
@@ -840,6 +867,7 @@ async def qr_config(callback: CallbackQuery, bot: Bot):
 
 @router.callback_query(F.data == "my_subscription")
 async def my_subscription(callback: CallbackQuery):
+    await callback.answer()
     async with async_session() as session:
         stmt = select(User).where(
             User.telegram_id == callback.from_user.id
@@ -853,7 +881,7 @@ async def my_subscription(callback: CallbackQuery):
         if not user or not user.subscriptions:
             await callback.message.edit_text(
                 "📭 У вас нет активной подписки.\n\n"
-                "Получите VPN, чтобы активировать подписку.",
+                "Нажми \"Получить конфиг\", чтобы начать.",
                 reply_markup=get_back_kb()
             )
             return
@@ -900,6 +928,7 @@ async def my_subscription(callback: CallbackQuery):
 
 @router.callback_query(F.data == "request_extra_config")
 async def request_extra_config(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    await callback.answer()
     # Проверяем подписку на канал
     if await is_channel_required():
         is_subscribed = await check_channel_subscription(bot, callback.from_user.id)
@@ -966,28 +995,22 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
     
     user_info = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
-    phone_info = f"📞 Телефон: `{user_phone}`" if user_phone and user_phone != "5553535" else "📞 Телефон: не указан"
+    phone_info = f"📞 Телефон: {user_phone}" if user_phone and user_phone != "5553535" else "📞 Телефон: не указан"
     configs_info = ", ".join(config_names) if config_names else "нет"
     
     await message.answer(
-        "✅ *Запрос отправлен!*\n\n"
-        "Администратор рассмотрит вашу заявку и создаст конфиг.",
-        parse_mode="Markdown",
+        "✅ Запрос отправлен!\n\n"
+        "Скоро создадим конфиг и пришлём вам.",
         reply_markup=get_main_menu_kb(message.from_user.id, True)
     )
     
-    # Экранируем специальные символы Markdown в названии устройства
-    import re
-    safe_device_name = re.sub(r'([_*\[\]()~`>#+=|{}.!-])', r'\\\1', device_name)
-    
     await bot.send_message(
         ADMIN_ID,
-        f"📱 *Запрос дополнительного конфига*\n\n"
+        f"📱 Запрос дополнительного конфига\n\n"
         f"👤 Пользователь: {user_info}\n"
-        f"🆔 ID: `{message.from_user.id}`\n"
+        f"🆔 ID: {message.from_user.id}\n"
         f"{phone_info}\n"
         f"📱 Текущие конфиги ({config_count}): {configs_info}\n\n"
-        f"🖥 Устройство: *{safe_device_name}*",
-        parse_mode="Markdown",
+        f"🖥 Устройство: {device_name}",
         reply_markup=get_config_request_kb(user_id)
     )

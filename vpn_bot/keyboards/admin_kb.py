@@ -120,8 +120,20 @@ def get_settings_kb() -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text="🔑 Пароль", callback_data="settings_password")],
         [InlineKeyboardButton(text="📢 Подписка на канал", callback_data="settings_channel")],
+        [InlineKeyboardButton(text="📱 Запрос телефона", callback_data="settings_phone")],
         [InlineKeyboardButton(text="📊 Мониторинг", callback_data="settings_monitoring")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_phone_settings_kb(is_enabled: bool) -> InlineKeyboardMarkup:
+    buttons = [
+        [
+            InlineKeyboardButton(text="🟢 Вкл", callback_data="settings_phone_on"),
+            InlineKeyboardButton(text="🔴 Выкл", callback_data="settings_phone_off"),
+        ],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_settings")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

@@ -6,7 +6,7 @@ def get_main_menu_kb(user_id: int = None, has_subscription: bool = False) -> Inl
     buttons = []
     
     if not has_subscription:
-        buttons.append([InlineKeyboardButton(text="🚀 Получить VPN", callback_data="get_vpn")])
+        buttons.append([InlineKeyboardButton(text="🚀 Получить конфиг", callback_data="get_vpn")])
     
     buttons.append([
         InlineKeyboardButton(text="📱 Конфиги", callback_data="my_configs"),

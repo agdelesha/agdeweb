@@ -41,3 +41,8 @@ async def get_bot_password() -> Optional[str]:
 async def is_channel_required() -> bool:
     """Проверяет, требуется ли подписка на канал"""
     return await get_setting("channel_required") == "1"
+
+
+async def is_phone_required() -> bool:
+    """Проверяет, требуется ли запрос номера телефона"""
+    return await get_setting("phone_required") != "0"

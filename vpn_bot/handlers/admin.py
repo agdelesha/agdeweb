@@ -14,7 +14,8 @@ from keyboards.admin_kb import (
     get_admin_menu_kb, get_users_list_kb, get_user_detail_kb,
     get_payment_review_kb, get_pending_payments_kb, get_confirm_delete_kb,
     get_user_configs_kb, get_admin_config_kb, get_settings_kb,
-    get_password_settings_kb, get_channel_settings_kb, get_monitoring_settings_kb
+    get_password_settings_kb, get_channel_settings_kb, get_monitoring_settings_kb,
+    get_phone_settings_kb
 )
 from keyboards.user_kb import get_main_menu_kb
 from services.wireguard import WireGuardService
@@ -53,6 +54,7 @@ async def admin_menu(callback: CallbackQuery):
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
     
+    await callback.answer()
     async with async_session() as session:
         stmt = select(func.count()).select_from(Payment).where(Payment.status == "pending")
         result = await session.execute(stmt)
@@ -71,6 +73,7 @@ async def admin_users(callback: CallbackQuery):
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
     
+    await callback.answer()
     async with async_session() as session:
         stmt = select(User).order_by(User.created_at.desc())
         result = await session.execute(stmt)
@@ -95,6 +98,7 @@ async def admin_users_page(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     page = int(callback.data.replace("admin_users_page_", ""))
     
     async with async_session() as session:
@@ -112,6 +116,7 @@ async def admin_user_detail(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     user_id = int(callback.data.replace("admin_user_", ""))
     
     async with async_session() as session:
@@ -158,8 +163,8 @@ async def admin_user_detail(callback: CallbackQuery):
     username = f"@{user.username}" if user.username else "—"
     
     await callback.message.edit_text(
-        f"👤 *Пользователь #{user.id}*\n\n"
-        f"🆔 Telegram ID: `{user.telegram_id}`\n"
+        f"👤 Пользователь #{user.id}\n\n"
+        f"🆔 Telegram ID: {user.telegram_id}\n"
         f"👤 Username: {username}\n"
         f"📝 Имя: {user.full_name}\n"
         f"📅 Регистрация: {user.created_at.strftime('%d.%m.%Y')}\n"
@@ -168,7 +173,7 @@ async def admin_user_detail(callback: CallbackQuery):
         f"📱 Конфигов: {len(user.configs)}\n"
         f"💰 Платежей: {len(user.payments)}"
         f"{traffic_info}",
-        parse_mode="Markdown",
+        parse_mode=None,
         reply_markup=get_user_detail_kb(user.id)
     )
 
@@ -178,6 +183,7 @@ async def admin_user_configs(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     user_id = int(callback.data.replace("admin_user_configs_", ""))
     
     async with async_session() as session:
@@ -205,6 +211,7 @@ async def admin_config_detail(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     config_id = int(callback.data.replace("admin_config_", ""))
     
     async with async_session() as session:
@@ -334,6 +341,7 @@ async def admin_user_payments(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     user_id = int(callback.data.replace("admin_user_payments_", ""))
     
     async with async_session() as session:
@@ -372,6 +380,7 @@ async def admin_pending_payments(callback: CallbackQuery, bot: Bot):
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     async with async_session() as session:
         stmt = select(Payment).where(Payment.status == "pending").options(
             selectinload(Payment.user)
@@ -659,8 +668,8 @@ async def admin_reject_payment(callback: CallbackQuery, bot: Bot):
             await bot.send_message(
                 payment.user.telegram_id,
                 "❌ *Платёж отклонён*\n\n"
-                "Ваш чек не прошёл проверку.\n"
-                "Если вы уверены, что оплата была произведена, свяжитесь с администратором.",
+                "Чек не прошёл проверку.\n"
+                "Если вы уверены, что оплата была — напишите нам, разберёмся!",
                 parse_mode="Markdown",
                 reply_markup=get_main_menu_kb(payment.user.telegram_id, False)
             )
@@ -837,6 +846,7 @@ async def admin_delete_user_confirm(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     user_id = int(callback.data.replace("admin_delete_user_", ""))
     
     async with async_session() as session:
@@ -904,6 +914,7 @@ async def admin_stats(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     async with async_session() as session:
         users_count = await session.scalar(select(func.count()).select_from(User))
         configs_count = await session.scalar(select(func.count()).select_from(Config))
@@ -1085,17 +1096,17 @@ async def admin_approve_config_request(callback: CallbackQuery, bot: Bot):
     
     # Извлекаем название устройства из сообщения
     import re
-    device_match = re.search(r'🖥 Устройство: \*(.+?)\*', callback.message.text)
-    device_name = device_match.group(1) if device_match else None
+    device_match = re.search(r'🖥 Устройство: (.+?)$', callback.message.text, re.MULTILINE)
+    device_name = device_match.group(1).strip() if device_match else None
     
-    # Формируем имя конфига: username_device или username_номер
+    # Формируем имя конфига: username + device или username + номер
     base_name = user_username if user_username else str(user_telegram_id)
     if device_name:
-        # Очищаем название устройства от спецсимволов для имени файла
-        clean_device = re.sub(r'[^\w\s-]', '', device_name).strip().replace(' ', '_')[:20]
-        config_name = f"{base_name}_{clean_device}"
+        # Очищаем название устройства от спецсимволов, оставляем только буквы и цифры
+        clean_device = re.sub(r'[^\w]', '', device_name)[:15]
+        config_name = f"{base_name}{clean_device}"
     else:
-        config_name = f"{base_name}_{config_count + 1}"
+        config_name = f"{base_name}{config_count + 1}" if config_count > 0 else base_name
     
     success, config_data, msg = await WireGuardService.create_config(config_name)
     
@@ -1139,8 +1150,7 @@ async def admin_approve_config_request(callback: CallbackQuery, bot: Bot):
             old_text
         )
         await callback.message.edit_text(
-            new_text + "\n\n✅ *ОДОБРЕНО*",
-            parse_mode="Markdown"
+            new_text + "\n\n✅ ОДОБРЕНО"
         )
     except:
         pass
@@ -1148,10 +1158,9 @@ async def admin_approve_config_request(callback: CallbackQuery, bot: Bot):
     try:
         await bot.send_message(
             user_telegram_id,
-            f"✅ *Дополнительный конфиг создан!*\n\n"
-            f"Конфиг: `{config_name}`\n"
-            f"Сейчас отправлю файлы.",
-            parse_mode="Markdown"
+            f"✅ Дополнительный конфиг создан!\n\n"
+            f"Конфиг: {config_name}\n"
+            f"Сейчас отправлю файлы."
         )
         
         if not LOCAL_MODE:
@@ -1214,7 +1223,7 @@ async def admin_reject_config_request(callback: CallbackQuery, bot: Bot):
         await bot.send_message(
             user_telegram_id,
             "❌ *Запрос на дополнительный конфиг отклонён*\n\n"
-            "Если у вас есть вопросы, свяжитесь с администратором.",
+            "Если есть вопросы — напишите нам!",
             parse_mode="Markdown",
             reply_markup=get_main_menu_kb(user_telegram_id, True)
         )
@@ -1227,6 +1236,7 @@ async def admin_settings(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     password_enabled = await get_setting("password_enabled") == "1"
     channel_required = await get_setting("channel_required") == "1"
     
@@ -1247,6 +1257,7 @@ async def settings_password(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     password_enabled = await get_setting("password_enabled") == "1"
     current_password = await get_setting("bot_password")
     
@@ -1309,6 +1320,7 @@ async def settings_password_change(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     await callback.message.edit_text(
         "🔑 *Изменение пароля*\n\n"
         "Введите новый пароль:",
@@ -1343,6 +1355,7 @@ async def settings_channel(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     channel_required = await get_setting("channel_required") == "1"
     status = "🟢 Включена" if channel_required else "🔴 Выключена"
     
@@ -1389,11 +1402,64 @@ async def settings_channel_off(callback: CallbackQuery):
     )
 
 
+@router.callback_query(F.data == "settings_phone")
+async def settings_phone(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    phone_required = await get_setting("phone_required") != "0"
+    status = "🟢 Включён" if phone_required else "🔴 Выключен"
+    
+    await callback.message.edit_text(
+        f"📱 *Запрос номера телефона*\n\n"
+        f"Статус: {status}\n\n"
+        f"_При регистрации бот будет просить поделиться номером телефона_",
+        parse_mode="Markdown",
+        reply_markup=get_phone_settings_kb(phone_required)
+    )
+
+
+@router.callback_query(F.data == "settings_phone_on")
+async def settings_phone_on(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await set_setting("phone_required", "1")
+    await callback.answer("✅ Запрос телефона включён")
+    
+    await callback.message.edit_text(
+        f"📱 *Запрос номера телефона*\n\n"
+        f"Статус: 🟢 Включён\n\n"
+        f"_При регистрации бот будет просить поделиться номером телефона_",
+        parse_mode="Markdown",
+        reply_markup=get_phone_settings_kb(True)
+    )
+
+
+@router.callback_query(F.data == "settings_phone_off")
+async def settings_phone_off(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await set_setting("phone_required", "0")
+    await callback.answer("✅ Запрос телефона выключен")
+    
+    await callback.message.edit_text(
+        f"📱 *Запрос номера телефона*\n\n"
+        f"Статус: 🔴 Выключен\n\n"
+        f"_При регистрации бот НЕ будет просить номер телефона_",
+        parse_mode="Markdown",
+        reply_markup=get_phone_settings_kb(False)
+    )
+
+
 @router.callback_query(F.data == "settings_monitoring")
 async def settings_monitoring(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     monitoring_enabled = await get_setting("monitoring_enabled") != "0"
     traffic_threshold = await get_setting("monitoring_traffic_gb") or "50"
     configs_threshold = await get_setting("monitoring_configs") or "3"
@@ -1460,6 +1526,7 @@ async def settings_monitoring_traffic(callback: CallbackQuery, state: FSMContext
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     current = await get_setting("monitoring_traffic_gb") or "50"
     
     await callback.message.edit_text(
@@ -1506,6 +1573,7 @@ async def settings_monitoring_configs(callback: CallbackQuery, state: FSMContext
     if not is_admin(callback.from_user.id):
         return
     
+    await callback.answer()
     current = await get_setting("monitoring_configs") or "3"
     
     await callback.message.edit_text(
