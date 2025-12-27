@@ -1180,14 +1180,14 @@ async def admin_approve_config_request(callback: CallbackQuery, bot: Bot):
     device_match = re.search(r'🖥 Устройство: (.+?)$', callback.message.text, re.MULTILINE)
     device_name = device_match.group(1).strip() if device_match else None
     
-    # Формируем имя конфига: username_device
+    # Формируем имя конфига: usernamedevice (без подчёркивания)
     base_name = user_username if user_username else f"user{user_telegram_id}"
     if device_name:
         # Очищаем название устройства от спецсимволов, оставляем только буквы и цифры
         clean_device = re.sub(r'[^\w]', '', device_name)[:15]
-        config_name = f"{base_name}_{clean_device}"
+        config_name = f"{base_name}{clean_device}"
     else:
-        config_name = f"{base_name}_{config_count + 1}" if config_count > 0 else base_name
+        config_name = f"{base_name}{config_count + 1}" if config_count > 0 else base_name
     
     success, config_data, msg = await WireGuardService.create_config(config_name)
     
