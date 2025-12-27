@@ -492,8 +492,24 @@ async def how_to(callback: CallbackQuery, bot: Bot):
     media = [InputMediaPhoto(media=FSInputFile(str(p))) for p in image_paths]
     await bot.send_media_group(callback.from_user.id, media)
     
-    # Сразу отмечаем что пользователь видел инструкцию
+    # Отправляем сообщение с кнопкой "да понял я, понял"
+    await bot.send_message(
+        callback.from_user.id,
+        "☝️ Всё понятно?",
+        reply_markup=get_how_to_kb()
+    )
+
+
+@router.callback_query(F.data == "how_to_understood")
+async def how_to_understood(callback: CallbackQuery, bot: Bot):
+    await callback.answer("👍 Отлично!")
     await set_user_how_to_seen(callback.from_user.id)
+    
+    # Удаляем сообщение "Всё понятно?" с кнопкой
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     
     has_sub = await check_has_subscription(callback.from_user.id)
     
@@ -512,6 +528,7 @@ async def how_to(callback: CallbackQuery, bot: Bot):
                     parse_mode=None
                 )
         
+        # Отправляем главное меню
         menu_text = (
             "Всё управление VPN — кнопками ниже:\n\n"
             "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
@@ -530,57 +547,6 @@ async def how_to(callback: CallbackQuery, bot: Bot):
         await bot.send_message(
             callback.from_user.id,
             "Выбери:",
-            parse_mode="Markdown",
-            reply_markup=get_welcome_kb(show_trial=show_trial)
-        )
-
-
-@router.callback_query(F.data == "how_to_understood")
-async def how_to_understood(callback: CallbackQuery, bot: Bot):
-    await callback.answer("👍 Отлично!")
-    await set_user_how_to_seen(callback.from_user.id)
-    
-    # Убираем кнопку "да понял я, понял"
-    await callback.message.edit_reply_markup(reply_markup=None)
-    
-    has_sub = await check_has_subscription(callback.from_user.id)
-    
-    if has_sub:
-        how_to_seen = True
-        menu_text = (
-            "Всё управление VPN — кнопками ниже:\n\n"
-            "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
-            "📊 *Подписка* — детали подписки и продление"
-        )
-        
-        # Отправляем конфиг отдельным сообщением после инструкции
-        user = await get_user_by_telegram_id(callback.from_user.id)
-        if user and user.configs and not LOCAL_MODE:
-            config = user.configs[0]
-            config_path = WireGuardService.get_config_file_path(config.name)
-            if os.path.exists(config_path):
-                await bot.send_document(
-                    callback.from_user.id,
-                    FSInputFile(config_path),
-                    caption="📄 Вот твой конфиг",
-                    parse_mode=None
-                )
-        
-        # Отправляем главное меню отдельным сообщением
-        await bot.send_message(
-            callback.from_user.id,
-            menu_text,
-            parse_mode="Markdown",
-            reply_markup=get_main_menu_kb(callback.from_user.id, True, how_to_seen)
-        )
-    else:
-        # Нет подписки — возвращаем к воронке
-        user = await get_user_by_telegram_id(callback.from_user.id)
-        show_trial = not user.trial_used if user else True
-        await callback.message.edit_text(
-            f"Привет! 👋\n"
-            f"Я помогу тебе подключить VPN\n\n"
-            f"Выбери:",
             parse_mode="Markdown",
             reply_markup=get_welcome_kb(show_trial=show_trial)
         )
