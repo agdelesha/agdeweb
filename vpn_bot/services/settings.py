@@ -46,3 +46,8 @@ async def is_channel_required() -> bool:
 async def is_phone_required() -> bool:
     """Проверяет, требуется ли запрос номера телефона"""
     return await get_setting("phone_required") != "0"
+
+
+async def is_config_approval_required() -> bool:
+    """Проверяет, требуется ли подтверждение админа для доп. конфига"""
+    return await get_setting("config_approval_required") != "0"

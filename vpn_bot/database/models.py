@@ -19,6 +19,7 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     trial_used: Mapped[bool] = mapped_column(Boolean, default=False)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+    how_to_seen: Mapped[bool] = mapped_column(Boolean, default=False)
 
     configs: Mapped[List["Config"]] = relationship("Config", back_populates="user", cascade="all, delete-orphan")
     subscriptions: Mapped[List["Subscription"]] = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")

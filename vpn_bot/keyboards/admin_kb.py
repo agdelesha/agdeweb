@@ -6,6 +6,7 @@ def get_admin_menu_kb(pending_count: int = 0) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users")],
         [InlineKeyboardButton(text=f"💰 Ожидают оплаты{pending_badge}", callback_data="admin_pending_payments")],
+        [InlineKeyboardButton(text="✉️ Сообщение", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings")],
     ]
@@ -43,9 +44,21 @@ def get_user_detail_kb(user_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📱 Конфиги", callback_data=f"admin_user_configs_{user_id}")],
         [InlineKeyboardButton(text="💰 История платежей", callback_data=f"admin_user_payments_{user_id}")],
         [InlineKeyboardButton(text="➕ Добавить конфиг", callback_data=f"admin_add_config_{user_id}")],
-        [InlineKeyboardButton(text="🎁 Подарить бессрочный", callback_data=f"admin_gift_{user_id}")],
+        [InlineKeyboardButton(text="🎁 Подарить", callback_data=f"admin_gift_menu_{user_id}")],
         [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data=f"admin_delete_user_{user_id}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_users")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_gift_menu_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура выбора срока подарочной подписки"""
+    buttons = [
+        [InlineKeyboardButton(text="📅 30 дней", callback_data=f"admin_gift_30_{user_id}")],
+        [InlineKeyboardButton(text="📅 90 дней", callback_data=f"admin_gift_90_{user_id}")],
+        [InlineKeyboardButton(text="📅 180 дней", callback_data=f"admin_gift_180_{user_id}")],
+        [InlineKeyboardButton(text="♾ Бессрочная", callback_data=f"admin_gift_unlimited_{user_id}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin_user_{user_id}")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -121,8 +134,20 @@ def get_settings_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔑 Пароль", callback_data="settings_password")],
         [InlineKeyboardButton(text="📢 Подписка на канал", callback_data="settings_channel")],
         [InlineKeyboardButton(text="📱 Запрос телефона", callback_data="settings_phone")],
+        [InlineKeyboardButton(text="📋 Подтверждение доп. конфига", callback_data="settings_config_approval")],
         [InlineKeyboardButton(text="📊 Мониторинг", callback_data="settings_monitoring")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_config_approval_kb(is_enabled: bool) -> InlineKeyboardMarkup:
+    buttons = [
+        [
+            InlineKeyboardButton(text="🟢 Вкл", callback_data="settings_config_approval_on"),
+            InlineKeyboardButton(text="🔴 Выкл", callback_data="settings_config_approval_off"),
+        ],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_settings")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -180,4 +205,44 @@ def get_monitoring_settings_kb(is_enabled: bool) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📱 Порог конфигов", callback_data="settings_monitoring_configs")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_settings")],
     ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_broadcast_menu_kb() -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text="📢 Всем", callback_data="broadcast_all")],
+        [InlineKeyboardButton(text="👤 Из списка", callback_data="broadcast_select")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_broadcast_cancel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_menu")]
+    ])
+
+
+def get_broadcast_users_kb(users: list, page: int = 0, per_page: int = 10) -> InlineKeyboardMarkup:
+    buttons = []
+    start = page * per_page
+    end = start + per_page
+    page_users = users[start:end]
+    
+    for user in page_users:
+        name = user.username or user.full_name[:20]
+        buttons.append([InlineKeyboardButton(
+            text=f"👤 {name}",
+            callback_data=f"broadcast_user_{user.telegram_id}"
+        )])
+    
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"broadcast_page_{page-1}"))
+    if end < len(users):
+        nav_buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"broadcast_page_{page+1}"))
+    if nav_buttons:
+        buttons.append(nav_buttons)
+    
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_broadcast")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)

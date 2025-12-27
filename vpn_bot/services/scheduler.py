@@ -64,10 +64,28 @@ class SchedulerService:
             
             for sub in subscriptions:
                 try:
+                    user = sub.user
+                    
+                    # Проверяем, есть ли у пользователя другая активная подписка (бессрочная или с более поздней датой)
+                    active_sub_stmt = select(Subscription).where(
+                        Subscription.user_id == user.id,
+                        Subscription.id != sub.id,
+                        (Subscription.expires_at.is_(None) | (Subscription.expires_at > sub.expires_at))
+                    )
+                    active_result = await session.execute(active_sub_stmt)
+                    has_better_sub = active_result.scalar() is not None
+                    
+                    if has_better_sub:
+                        # У пользователя есть бессрочная или более длительная подписка — не уведомляем
+                        sub.notified_3_days = True
+                        await session.commit()
+                        logger.info(f"Пропускаем уведомление для {user.telegram_id} — есть активная подписка")
+                        continue
+                    
                     days_left = (sub.expires_at - datetime.utcnow()).days
                     
                     await self.bot.send_message(
-                        sub.user.telegram_id,
+                        user.telegram_id,
                         f"⚠️ *Внимание!*\n\n"
                         f"Ваша подписка истекает через {days_left} дн.\n"
                         f"Дата окончания: {sub.expires_at.strftime('%d.%m.%Y')}\n\n"
@@ -78,7 +96,7 @@ class SchedulerService:
                     sub.notified_3_days = True
                     await session.commit()
                     
-                    logger.info(f"Уведомление отправлено пользователю {sub.user.telegram_id}")
+                    logger.info(f"Уведомление отправлено пользователю {user.telegram_id}")
                     
                 except Exception as e:
                     logger.error(f"Ошибка отправки уведомления: {e}")

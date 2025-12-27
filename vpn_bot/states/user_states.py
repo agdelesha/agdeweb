@@ -20,3 +20,5 @@ class AdminStates(StatesGroup):
     waiting_for_new_password = State()
     waiting_for_traffic_threshold = State()
     waiting_for_configs_threshold = State()
+    waiting_for_broadcast_all = State()
+    waiting_for_broadcast_user = State()

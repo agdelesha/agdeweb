@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 from datetime import datetime, timedelta
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, FSInputFile, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery, FSInputFile, InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from sqlalchemy import select
@@ -13,12 +13,14 @@ from config import TARIFFS, PAYMENT_PHONE, ADMIN_ID, CLIENT_DIR, LOCAL_MODE
 from database import async_session, User, Config, Subscription, Payment
 from keyboards.user_kb import (
     get_main_menu_kb, get_tariffs_kb, get_payment_kb, 
-    get_back_kb, get_configs_kb, get_config_detail_kb
+    get_back_kb, get_configs_kb, get_config_detail_kb,
+    get_no_configs_kb, get_no_subscription_kb, get_subscription_kb, get_how_to_kb,
+    get_welcome_kb, get_trial_activated_kb, get_after_config_kb
 )
 from states.user_states import PaymentStates, RegistrationStates, ConfigRequestStates
 from services.wireguard import WireGuardService
 from services.ocr import OCRService
-from services.settings import is_password_required, is_channel_required, get_bot_password, is_phone_required
+from services.settings import is_password_required, is_channel_required, get_bot_password, is_phone_required, is_config_approval_required
 from keyboards.admin_kb import get_payment_review_kb, get_config_request_kb, get_check_subscription_kb
 
 CHANNEL_USERNAME = "agdevpn"
@@ -88,6 +90,24 @@ async def check_has_subscription(telegram_id: int) -> bool:
     return False
 
 
+async def get_user_how_to_seen(telegram_id: int) -> bool:
+    async with async_session() as session:
+        stmt = select(User.how_to_seen).where(User.telegram_id == telegram_id)
+        result = await session.execute(stmt)
+        value = result.scalar_one_or_none()
+        return value if value is not None else False
+
+
+async def set_user_how_to_seen(telegram_id: int) -> None:
+    async with async_session() as session:
+        stmt = select(User).where(User.telegram_id == telegram_id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        if user:
+            user.how_to_seen = True
+            await session.commit()
+
+
 async def check_channel_subscription(bot: Bot, user_id: int) -> bool:
     try:
         member = await bot.get_chat_member(f"@{CHANNEL_USERNAME}", user_id)
@@ -111,7 +131,7 @@ def get_phone_keyboard() -> ReplyKeyboardMarkup:
 @router.message(Command("about"))
 async def cmd_about(message: Message):
     await message.answer(
-        "🌐 Простой незаметный турецкий блокировщик рекламы.\n\n"
+        "🌐 Простой и незаметный 🥷🏻\n\n"
         "📩 Связь со мной: @agdelesha",
         parse_mode="Markdown"
     )
@@ -168,23 +188,44 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
             await state.set_state(RegistrationStates.waiting_for_phone)
             return
         
-        # Телефон не требуется — сразу в главное меню
+        # Телефон не требуется — показываем воронку
         msg = await message.answer(
-            f"👋 Привет, *{message.from_user.first_name}*!\n\n"
-            "🛡️ Блокировщик рекламы, да и всего-то",
+            f"Привет! 👋\n"
+            f"Я помогу тебе подключить VPN\n\n"
+            f"Выбери:",
             parse_mode="Markdown",
-            reply_markup=get_main_menu_kb(message.from_user.id, False)
+            reply_markup=get_welcome_kb(show_trial=True)
         )
         await save_bot_message(state, msg.message_id)
         return
     
+    # Существующий пользователь
     has_sub = await check_has_subscription(message.from_user.id)
-    msg = await message.answer(
-        f"👋 С возвращением, *{message.from_user.first_name}*!\n\n"
-        "🛡️ Блокировщик рекламы, да и всего-то",
-        parse_mode="Markdown",
-        reply_markup=get_main_menu_kb(message.from_user.id, has_sub)
-    )
+    
+    if has_sub:
+        # Есть подписка — главное меню
+        how_to_seen = await get_user_how_to_seen(message.from_user.id)
+        menu_text = (
+            "Всё управление VPN — кнопками ниже:\n\n"
+            "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
+            "📊 *Подписка* — детали подписки и продление"
+        )
+        msg = await message.answer(
+            menu_text,
+            parse_mode="Markdown",
+            reply_markup=get_main_menu_kb(message.from_user.id, True, how_to_seen)
+        )
+    else:
+        # Нет подписки — воронка
+        user = await get_user_by_telegram_id(message.from_user.id)
+        show_trial = not user.trial_used if user else True
+        msg = await message.answer(
+            f"Привет! 👋\n"
+            f"Я помогу тебе подключить VPN\n\n"
+            f"Выбери:",
+            parse_mode="Markdown",
+            reply_markup=get_welcome_kb(show_trial=show_trial)
+        )
     await save_bot_message(state, msg.message_id)
 
 
@@ -248,7 +289,7 @@ async def check_subscription_callback(callback: CallbackQuery, state: FSMContext
     is_subscribed = await check_channel_subscription(bot, callback.from_user.id)
     
     if not is_subscribed:
-        await callback.answer("❌ Вы не подписаны на канал!", show_alert=True)
+        await callback.answer("❌ Ты не подписан на канал!", show_alert=True)
         return
     
     data = await state.get_data()
@@ -283,7 +324,7 @@ async def check_subscription_callback(callback: CallbackQuery, state: FSMContext
         await callback.message.edit_text(
             "✅ Подписка подтверждена!\n\n"
             "💳 *Продление подписки*\n\n"
-            "Выберите тариф для продления.\n"
+            "Выбери тариф для продления.\n"
             "Дни будут добавлены к текущей подписке.",
             parse_mode="Markdown",
             reply_markup=get_tariffs_kb(show_trial=False)
@@ -376,11 +417,234 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
     has_sub = await check_has_subscription(callback.from_user.id)
-    await callback.message.edit_text(
-        "🛡️ Блокировщик рекламы, да и всего-то",
+    
+    if has_sub:
+        how_to_seen = await get_user_how_to_seen(callback.from_user.id)
+        menu_text = (
+            "Всё управление VPN — кнопками ниже:\n\n"
+            "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
+            "📊 *Подписка* — детали подписки и продление"
+        )
+        await callback.message.edit_text(
+            menu_text,
+            parse_mode="Markdown",
+            reply_markup=get_main_menu_kb(callback.from_user.id, True, how_to_seen)
+        )
+    else:
+        # Нет подписки — возвращаем к воронке
+        user = await get_user_by_telegram_id(callback.from_user.id)
+        show_trial = not user.trial_used if user else True
+        await callback.message.edit_text(
+            "Выбери:",
+            parse_mode="Markdown",
+            reply_markup=get_welcome_kb(show_trial=show_trial)
+        )
+
+
+@router.callback_query(F.data == "how_to")
+async def how_to(callback: CallbackQuery, bot: Bot):
+    await callback.answer()
+    import pathlib
+    how_dir = pathlib.Path(__file__).parent.parent / "andhow"
+
+    await bot.send_message(
+        callback.from_user.id,
+        (
+            f"*{callback.from_user.first_name}*, всё просто:\n\n"
+            "1️⃣ Получаешь конфигурацию\n"
+            "2️⃣ Загружаешь её в WireGuard\n"
+            "3️⃣ В WireGuard выбираешь скачанную конфигурацию\n"
+            "4️⃣ Готово! 🎉\n\n"
+            "📲 *Скачать WireGuard:*\n"
+            "— iPhone: https://apps.apple.com/app/id1441195209\n"
+            "— Другие устройства: https://www.wireguard.com/install/\n\n"
+            "👇 Подробная инструкция ниже:"
+        ),
         parse_mode="Markdown",
-        reply_markup=get_main_menu_kb(callback.from_user.id, has_sub)
+        disable_web_page_preview=True
     )
+
+    image_paths = sorted([p for p in how_dir.iterdir() if p.is_file() and p.suffix.lower() in {".jpg", ".jpeg", ".png"}])
+    if not image_paths:
+        await bot.send_message(callback.from_user.id, "❌ Не нашёл картинки инструкции")
+        return
+
+    media = [InputMediaPhoto(media=FSInputFile(str(p))) for p in image_paths]
+    await bot.send_media_group(callback.from_user.id, media)
+    
+    await bot.send_message(
+        callback.from_user.id,
+        "☝️ Всё понятно?",
+        reply_markup=get_how_to_kb()
+    )
+
+
+@router.callback_query(F.data == "how_to_understood")
+async def how_to_understood(callback: CallbackQuery, bot: Bot):
+    await callback.answer("👍 Отлично!")
+    await set_user_how_to_seen(callback.from_user.id)
+    
+    # Убираем кнопку "да понял я, понял"
+    await callback.message.edit_reply_markup(reply_markup=None)
+    
+    has_sub = await check_has_subscription(callback.from_user.id)
+    
+    if has_sub:
+        how_to_seen = True
+        menu_text = (
+            "Всё управление VPN — кнопками ниже:\n\n"
+            "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
+            "📊 *Подписка* — детали подписки и продление"
+        )
+        
+        # Отправляем конфиг отдельным сообщением после инструкции
+        user = await get_user_by_telegram_id(callback.from_user.id)
+        if user and user.configs and not LOCAL_MODE:
+            config = user.configs[0]
+            config_path = WireGuardService.get_config_file_path(config.name)
+            if os.path.exists(config_path):
+                await bot.send_document(
+                    callback.from_user.id,
+                    FSInputFile(config_path),
+                    caption="📄 Вот твой конфиг",
+                    parse_mode=None
+                )
+        
+        # Отправляем главное меню отдельным сообщением
+        await bot.send_message(
+            callback.from_user.id,
+            menu_text,
+            parse_mode="Markdown",
+            reply_markup=get_main_menu_kb(callback.from_user.id, True, how_to_seen)
+        )
+    else:
+        # Нет подписки — возвращаем к воронке
+        user = await get_user_by_telegram_id(callback.from_user.id)
+        show_trial = not user.trial_used if user else True
+        await callback.message.edit_text(
+            f"Привет! 👋\n"
+            f"Я помогу тебе подключить VPN\n\n"
+            f"Выбери:",
+            parse_mode="Markdown",
+            reply_markup=get_welcome_kb(show_trial=show_trial)
+        )
+
+
+# ===== АВТОВОРОНКА =====
+
+@router.callback_query(F.data == "funnel_trial")
+async def funnel_trial(callback: CallbackQuery):
+    """Шаг 2 — пользователь выбрал пробный доступ"""
+    await callback.answer()
+    
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    if user and user.trial_used:
+        await callback.message.edit_text(
+            "❌ Ты уже использовал пробный период.\n\n"
+            "Выбери тариф для продолжения:",
+            parse_mode="Markdown",
+            reply_markup=get_tariffs_kb(show_trial=False)
+        )
+        return
+    
+    await callback.message.edit_text(
+        "Отлично 👍 пробный доступ активирован!\n\n"
+        "Нажми кнопку «Получить»",
+        parse_mode="Markdown",
+        reply_markup=get_trial_activated_kb()
+    )
+
+
+@router.callback_query(F.data == "funnel_tariffs")
+async def funnel_tariffs(callback: CallbackQuery):
+    """Выбор тарифов из воронки"""
+    await callback.answer()
+    
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    show_trial = not user.trial_used if user else True
+    
+    await callback.message.edit_text(
+        "📋 *Выбери тарифный план:*",
+        parse_mode="Markdown",
+        reply_markup=get_tariffs_kb(show_trial=show_trial)
+    )
+
+
+@router.callback_query(F.data == "funnel_get_config")
+async def funnel_get_config(callback: CallbackQuery, bot: Bot):
+    """Шаг 3 — получение конфига после активации пробного периода"""
+    await callback.answer()
+    
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    
+    # Активируем пробный период
+    async with async_session() as session:
+        stmt = select(User).where(User.telegram_id == callback.from_user.id)
+        result = await session.execute(stmt)
+        db_user = result.scalar_one_or_none()
+        
+        if db_user:
+            db_user.trial_used = True
+            
+            # Создаём подписку на 7 дней
+            trial_sub = Subscription(
+                user_id=db_user.id,
+                tariff_type="trial",
+                days_total=7,
+                expires_at=datetime.utcnow() + timedelta(days=7)
+            )
+            session.add(trial_sub)
+            await session.commit()
+    
+    # Создаём конфиг (только username, без telegram_id)
+    username = callback.from_user.username or f"user{callback.from_user.id}"
+    config_name = username
+    
+    success, config_data, error_msg = await WireGuardService.create_config(config_name)
+    
+    if not success:
+        await callback.message.edit_text(
+            f"❌ Ошибка создания конфига: {error_msg}\n\n"
+            "Напиши @agdelesha для помощи.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # Сохраняем конфиг в БД
+    async with async_session() as session:
+        stmt = select(User).where(User.telegram_id == callback.from_user.id)
+        result = await session.execute(stmt)
+        db_user = result.scalar_one_or_none()
+        
+        if db_user:
+            new_config = Config(
+                user_id=db_user.id,
+                name=config_name,
+                public_key=config_data.public_key,
+                preshared_key=config_data.preshared_key,
+                allowed_ips=config_data.allowed_ips,
+                client_ip=config_data.client_ip,
+                is_active=True
+            )
+            session.add(new_config)
+            await session.commit()
+    
+    # Отправляем конфиг с кнопкой "а как?"
+    config_path = WireGuardService.get_config_file_path(config_name)
+    
+    if not LOCAL_MODE and os.path.exists(config_path):
+        await bot.send_document(
+            callback.from_user.id,
+            FSInputFile(config_path),
+            caption="📄 Вот твой конфиг\n\nЧерез 7 дней пробный период закончится.",
+            reply_markup=get_after_config_kb()
+        )
+    else:
+        await bot.send_message(
+            callback.from_user.id,
+            "🔧 [LOCAL_MODE] Конфиг будет отправлен на сервере",
+            reply_markup=get_after_config_kb()
+        )
 
 
 @router.callback_query(F.data == "get_vpn")
@@ -390,7 +654,7 @@ async def get_vpn(callback: CallbackQuery):
     show_trial = not user.trial_used if user else True
     
     await callback.message.edit_text(
-        "📋 *Выберите тарифный план:*\n\n"
+        "📋 *Выбери тарифный план:*\n\n"
         "🎁 Пробный — 7 дней бесплатно (один раз)\n"
         "📅 30 дней — 100₽\n"
         "📅 90 дней — 200₽\n"
@@ -417,7 +681,7 @@ async def extend_subscription(callback: CallbackQuery, state: FSMContext, bot: B
     
     await callback.message.edit_text(
         "💳 *Продление подписки*\n\n"
-        "Выберите тариф для продления.\n"
+        "Выбери тариф для продления.\n"
         "Дни будут добавлены к текущей подписке.",
         parse_mode="Markdown",
         reply_markup=get_tariffs_kb(show_trial=False)
@@ -441,7 +705,7 @@ async def tariff_trial(callback: CallbackQuery, bot: Bot):
         
         await callback.message.edit_text("⏳ Создаю конфиг...")
         
-        config_name = user.username if user.username else str(callback.from_user.id)
+        config_name = user.username if user.username else f"user{callback.from_user.id}"
         success, config_data, msg = await WireGuardService.create_config(config_name)
         
         if not success:
@@ -478,7 +742,7 @@ async def tariff_trial(callback: CallbackQuery, bot: Bot):
         await callback.message.edit_text(
             "✅ *Пробный период активирован!*\n\n"
             f"📅 Действует до: {expires_at.strftime('%d.%m.%Y')}\n\n"
-            "Сейчас отправлю вам конфиг.",
+            "Сейчас отправлю тебе конфиг.",
             parse_mode="Markdown"
         )
         
@@ -489,7 +753,7 @@ async def tariff_trial(callback: CallbackQuery, bot: Bot):
                 await bot.send_document(
                     callback.from_user.id,
                     FSInputFile(config_path),
-                    caption="📄 Ваш WireGuard конфиг\n\n📷 Если нужен QR-код, его можно найти в кнопке \"Конфиги\""
+                    caption="📄 Твой WireGuard конфиг\n\n📷 Если нужен QR-код, его можно найти в кнопке \"Конфиги\""
                 )
         else:
             await bot.send_message(
@@ -497,11 +761,17 @@ async def tariff_trial(callback: CallbackQuery, bot: Bot):
                 "🔧 [LOCAL_MODE] Конфиг будет отправлен на сервере"
             )
         
+        how_to_seen = await get_user_how_to_seen(callback.from_user.id)
+        menu_text = (
+            "Всё управление VPN — кнопками ниже:\n\n"
+            "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
+            "📊 *Подписка* — детали подписки и продление"
+        )
         await bot.send_message(
             callback.from_user.id,
-            "🏠 *Главное меню*",
+            menu_text,
             parse_mode="Markdown",
-            reply_markup=get_main_menu_kb(callback.from_user.id, True)
+            reply_markup=get_main_menu_kb(callback.from_user.id, True, how_to_seen)
         )
 
 
@@ -647,7 +917,7 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
         new_expires = None
         
         if not has_config:
-            config_name = user_username if user_username else str(user_telegram_id)
+            config_name = user_username if user_username else f"user{user_telegram_id}"
             success, config_data, msg = await WireGuardService.create_config(config_name)
             if success:
                 config_created = True
@@ -702,13 +972,19 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
                 await bot.send_document(
                     user_telegram_id,
                     FSInputFile(config_path),
-                    caption="📄 Ваш WireGuard конфиг\n\n📷 Если нужен QR-код, его можно найти в кнопке \"Конфиги\""
+                    caption="📄 Твой WireGuard конфиг\n\n📷 Если нужен QR-код, его можно найти в кнопке \"Конфиги\""
                 )
         
+        how_to_seen = await get_user_how_to_seen(user_telegram_id)
+        menu_text = (
+            "Всё управление VPN — кнопками ниже:\n\n"
+            "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
+            "📊 *Подписка* — детали подписки и продление"
+        )
         await message.answer(
-            "🏠 *Главное меню*",
+            menu_text,
             parse_mode="Markdown",
-            reply_markup=get_main_menu_kb(user_telegram_id, True)
+            reply_markup=get_main_menu_kb(user_telegram_id, True, how_to_seen)
         )
         
         await bot.send_photo(
@@ -764,14 +1040,14 @@ async def my_configs(callback: CallbackQuery):
         
         if not user or not user.configs:
             await callback.message.edit_text(
-                "📭 У вас пока нет конфигов.\n\n"
+                "📭 У тебя пока нет конфигов.\n\n"
                 "Нажми \"Получить конфиг\", чтобы начать.",
-                reply_markup=get_back_kb()
+                reply_markup=get_no_configs_kb()
             )
             return
         
         await callback.message.edit_text(
-            f"📱 *Ваши конфиги ({len(user.configs)}):*\n\n"
+            f"📱 *Твои конфиги ({len(user.configs)}):*\n\n"
             "🟢 — активен\n"
             "🔴 — отключен",
             parse_mode="Markdown",
@@ -795,11 +1071,22 @@ async def config_detail(callback: CallbackQuery):
         
         status = "🟢 Активен" if config.is_active else "🔴 Отключен"
         
+        traffic_text = ""
+        if config.public_key:
+            traffic_stats = await WireGuardService.get_traffic_stats()
+            if config.public_key in traffic_stats:
+                stats = traffic_stats[config.public_key]
+                received = WireGuardService.format_bytes(stats['received'])
+                sent = WireGuardService.format_bytes(stats['sent'])
+                total = WireGuardService.format_bytes(stats['received'] + stats['sent'])
+                traffic_text = f"\n\n📊 *Трафик:*\n⬇️ Получено: {received}\n⬆️ Отправлено: {sent}\n📈 Всего: {total}"
+        
         await callback.message.edit_text(
             f"📱 *Конфиг: {config.name}*\n\n"
             f"Статус: {status}\n"
             f"IP: `{config.client_ip}`\n"
-            f"Создан: {config.created_at.strftime('%d.%m.%Y')}",
+            f"Создан: {config.created_at.strftime('%d.%m.%Y')}"
+            f"{traffic_text}",
             parse_mode="Markdown",
             reply_markup=get_config_detail_kb(config.id, config.is_active)
         )
@@ -828,7 +1115,8 @@ async def download_config(callback: CallbackQuery, bot: Bot):
             await bot.send_document(
                 callback.from_user.id,
                 FSInputFile(config_path),
-                caption=f"📄 Конфиг: {config.name}"
+                caption=f"📄 Конфиг: {config.name}",
+                parse_mode=None
             )
             await callback.answer("✅ Конфиг отправлен")
         else:
@@ -880,9 +1168,9 @@ async def my_subscription(callback: CallbackQuery):
         
         if not user or not user.subscriptions:
             await callback.message.edit_text(
-                "📭 У вас нет активной подписки.\n\n"
+                "📭 У тебя нет активной подписки.\n\n"
                 "Нажми \"Получить конфиг\", чтобы начать.",
-                reply_markup=get_back_kb()
+                reply_markup=get_no_subscription_kb()
             )
             return
         
@@ -898,9 +1186,9 @@ async def my_subscription(callback: CallbackQuery):
         if not active_sub:
             await callback.message.edit_text(
                 "❌ *Подписка истекла*\n\n"
-                "Продлите подписку для возобновления доступа.",
+                "Продли подписку для возобновления доступа.",
                 parse_mode="Markdown",
-                reply_markup=get_back_kb()
+                reply_markup=get_no_subscription_kb()
             )
             return
         
@@ -916,13 +1204,26 @@ async def my_subscription(callback: CallbackQuery):
         
         gift_text = "🎁 Подарочная" if active_sub.is_gift else ""
         
+        total_received = 0
+        total_sent = 0
+        traffic_stats = await WireGuardService.get_traffic_stats()
+        for config in user.configs:
+            if config.public_key and config.public_key in traffic_stats:
+                stats = traffic_stats[config.public_key]
+                total_received += stats['received']
+                total_sent += stats['sent']
+        
+        total_traffic = WireGuardService.format_bytes(total_received + total_sent)
+        traffic_text = f"\n\n📊 *Общий трафик:* {total_traffic}" if (total_received + total_sent) > 0 else ""
+        
         await callback.message.edit_text(
             f"{status_text}\n\n"
             f"📋 Тариф: {tariff_name} {gift_text}\n"
             f"📅 Действует до: {expires_text}\n"
-            f"📱 Конфигов: {len(user.configs)}",
+            f"📱 Конфигов: {len(user.configs)}"
+            f"{traffic_text}",
             parse_mode="Markdown",
-            reply_markup=get_back_kb()
+            reply_markup=get_subscription_kb(has_active=True)
         )
 
 
@@ -991,26 +1292,79 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
         user_phone = user.phone
         config_count = len(user.configs)
         config_names = [c.name for c in user.configs]
+        username = user.username
+        telegram_id = user.telegram_id
     
     await state.clear()
     
-    user_info = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
-    phone_info = f"📞 Телефон: {user_phone}" if user_phone and user_phone != "5553535" else "📞 Телефон: не указан"
-    configs_info = ", ".join(config_names) if config_names else "нет"
-    
-    await message.answer(
-        "✅ Запрос отправлен!\n\n"
-        "Скоро создадим конфиг и пришлём вам.",
-        reply_markup=get_main_menu_kb(message.from_user.id, True)
-    )
-    
-    await bot.send_message(
-        ADMIN_ID,
-        f"📱 Запрос дополнительного конфига\n\n"
-        f"👤 Пользователь: {user_info}\n"
-        f"🆔 ID: {message.from_user.id}\n"
-        f"{phone_info}\n"
-        f"📱 Текущие конфиги ({config_count}): {configs_info}\n\n"
-        f"🖥 Устройство: {device_name}",
-        reply_markup=get_config_request_kb(user_id)
-    )
+    # Проверяем, нужно ли подтверждение админа
+    if await is_config_approval_required():
+        # Отправляем запрос админу
+        user_info = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
+        phone_info = f"📞 Телефон: {user_phone}" if user_phone and user_phone != "5553535" else "📞 Телефон: не указан"
+        configs_info = ", ".join(config_names) if config_names else "нет"
+        
+        await message.answer(
+            "✅ Запрос отправлен!\n\n"
+            "Скоро создадим конфиг и пришлём тебе.",
+            reply_markup=get_main_menu_kb(message.from_user.id, True)
+        )
+        
+        await bot.send_message(
+            ADMIN_ID,
+            f"📱 Запрос дополнительного конфига\n\n"
+            f"👤 Пользователь: {user_info}\n"
+            f"🆔 ID: {message.from_user.id}\n"
+            f"{phone_info}\n"
+            f"📱 Текущие конфиги ({config_count}): {configs_info}\n\n"
+            f"🖥 Устройство: {device_name}",
+            reply_markup=get_config_request_kb(user_id)
+        )
+    else:
+        # Создаём конфиг автоматически
+        # Название: ник + устройство (очищенное от спецсимволов)
+        import re
+        base_name = username or f"user{telegram_id}"
+        clean_device = re.sub(r'[^\w]', '', device_name)[:15]
+        config_name = f"{base_name}_{clean_device}"
+        
+        success, config_data, msg = await WireGuardService.create_config(config_name)
+        
+        if not success:
+            await message.answer(
+                f"❌ Ошибка создания конфига: {msg}\n\n"
+                "Напиши @agdelesha для помощи.",
+                reply_markup=get_main_menu_kb(message.from_user.id, True)
+            )
+            return
+        
+        # Сохраняем конфиг в БД
+        async with async_session() as session:
+            new_config = Config(
+                user_id=user_id,
+                name=config_name,
+                public_key=config_data.public_key,
+                preshared_key=config_data.preshared_key,
+                allowed_ips=config_data.allowed_ips,
+                client_ip=config_data.client_ip,
+                is_active=True
+            )
+            session.add(new_config)
+            await session.commit()
+        
+        # Отправляем конфиг пользователю (без QR-кода — его можно найти в меню "Конфиги")
+        if not LOCAL_MODE:
+            config_path = WireGuardService.get_config_file_path(config_name)
+            
+            if os.path.exists(config_path):
+                await bot.send_document(
+                    message.from_user.id,
+                    FSInputFile(config_path),
+                    caption=f"📄 Твой новый конфиг для {device_name}\n\n📷 QR-код можно найти в меню «Конфиги»",
+                    parse_mode=None
+                )
+        
+        await message.answer(
+            "✅ Конфиг создан!",
+            reply_markup=get_main_menu_kb(message.from_user.id, True)
+        )

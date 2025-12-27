@@ -15,7 +15,8 @@ from keyboards.admin_kb import (
     get_payment_review_kb, get_pending_payments_kb, get_confirm_delete_kb,
     get_user_configs_kb, get_admin_config_kb, get_settings_kb,
     get_password_settings_kb, get_channel_settings_kb, get_monitoring_settings_kb,
-    get_phone_settings_kb
+    get_phone_settings_kb, get_config_approval_kb, get_broadcast_menu_kb, 
+    get_broadcast_cancel_kb, get_broadcast_users_kb, get_gift_menu_kb
 )
 from keyboards.user_kb import get_main_menu_kb
 from services.wireguard import WireGuardService
@@ -33,7 +34,7 @@ def is_admin(user_id: int) -> bool:
 @router.message(Command("admin"))
 async def cmd_admin(message: Message):
     if not is_admin(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к админ-панели")
+        await message.answer("❌ У тебя нет доступа к админ-панели")
         return
     
     async with async_session() as session:
@@ -42,7 +43,7 @@ async def cmd_admin(message: Message):
         pending_count = result.scalar()
     
     await message.answer(
-        "🔧 *Админ-панель*\n\nВыберите действие:",
+        "🔧 *Админ-панель*\n\nВыбери действие:",
         parse_mode="Markdown",
         reply_markup=get_admin_menu_kb(pending_count)
     )
@@ -61,7 +62,7 @@ async def admin_menu(callback: CallbackQuery):
         pending_count = result.scalar()
     
     await callback.message.edit_text(
-        "🔧 *Админ-панель*\n\nВыберите действие:",
+        "🔧 *Админ-панель*\n\nВыбери действие:",
         parse_mode="Markdown",
         reply_markup=get_admin_menu_kb(pending_count)
     )
@@ -520,7 +521,7 @@ async def admin_approve_payment(callback: CallbackQuery, bot: Bot):
     config_data = None
     
     if not has_config:
-        config_name = user_username if user_username else str(user_telegram_id)
+        config_name = user_username if user_username else f"user{user_telegram_id}"
         success, config_data, msg = await WireGuardService.create_config(config_name)
         if success:
             config_created = True
@@ -597,7 +598,7 @@ async def admin_approve_payment(callback: CallbackQuery, bot: Bot):
         )
         
         if config_created:
-            msg_text += "\nСейчас отправлю вам конфиг."
+            msg_text += "\nСейчас отправлю тебе конфиг."
         
         await bot.send_message(user_telegram_id, msg_text, parse_mode="Markdown")
         
@@ -609,7 +610,7 @@ async def admin_approve_payment(callback: CallbackQuery, bot: Bot):
                 await bot.send_document(
                     user_telegram_id,
                     FSInputFile(config_path),
-                    caption="📄 Ваш WireGuard конфиг"
+                    caption="📄 Твой WireGuard конфиг"
                 )
             
             if os.path.exists(qr_path):
@@ -619,9 +620,14 @@ async def admin_approve_payment(callback: CallbackQuery, bot: Bot):
                     caption="📷 QR-код для быстрой настройки"
                 )
         
+        menu_text = (
+            "👋 Привет!\n\n"
+            "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
+            "📊 *Подписка* — детали подписки и продление"
+        )
         await bot.send_message(
             user_telegram_id,
-            "🏠 *Главное меню*",
+            menu_text,
             parse_mode="Markdown",
             reply_markup=get_main_menu_kb(user_telegram_id, True)
         )
@@ -669,7 +675,7 @@ async def admin_reject_payment(callback: CallbackQuery, bot: Bot):
                 payment.user.telegram_id,
                 "❌ *Платёж отклонён*\n\n"
                 "Чек не прошёл проверку.\n"
-                "Если вы уверены, что оплата была — напишите нам, разберёмся!",
+                "Если ты уверен, что оплата была — напиши нам, разберёмся!",
                 parse_mode="Markdown",
                 reply_markup=get_main_menu_kb(payment.user.telegram_id, False)
             )
@@ -677,12 +683,56 @@ async def admin_reject_payment(callback: CallbackQuery, bot: Bot):
             logger.error(f"Ошибка отправки уведомления: {e}")
 
 
-@router.callback_query(F.data.startswith("admin_gift_"))
-async def admin_gift(callback: CallbackQuery, bot: Bot):
+@router.callback_query(F.data.startswith("admin_gift_menu_"))
+async def admin_gift_menu(callback: CallbackQuery):
+    """Показывает меню выбора срока подарочной подписки"""
     if not is_admin(callback.from_user.id):
         return
     
-    user_id = int(callback.data.replace("admin_gift_", ""))
+    user_id = int(callback.data.replace("admin_gift_menu_", ""))
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.id == user_id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        
+        user_info = f"@{user.username}" if user.username else user.full_name
+    
+    await callback.message.edit_text(
+        f"🎁 *Подарить подписку*\n\n"
+        f"👤 Пользователь: {user_info}\n\n"
+        f"Выбери срок подписки:",
+        parse_mode="Markdown",
+        reply_markup=get_gift_menu_kb(user_id)
+    )
+
+
+@router.callback_query(F.data.regexp(r"admin_gift_(30|90|180|unlimited)_(\d+)"))
+async def admin_gift_subscription(callback: CallbackQuery, bot: Bot):
+    """Дарит подписку на выбранный срок"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    # Парсим данные из callback
+    parts = callback.data.split("_")
+    gift_type = parts[2]  # 30, 90, 180 или unlimited
+    user_id = int(parts[3])
+    
+    # Определяем срок подписки
+    if gift_type == "unlimited":
+        days = None
+        tariff_type = "unlimited"
+        gift_text = "бессрочная подписка"
+        user_msg = "🎁 *Тебе подарена бессрочная подписка!*\n\nТвоя подписка теперь не имеет срока действия."
+    else:
+        days = int(gift_type)
+        tariff_type = f"gift_{days}"
+        gift_text = f"подписка на {days} дней"
+        user_msg = f"🎁 *Тебе подарена подписка на {days} дней!*"
     
     async with async_session() as session:
         stmt = select(User).where(User.id == user_id).options(selectinload(User.configs))
@@ -693,18 +743,32 @@ async def admin_gift(callback: CallbackQuery, bot: Bot):
             await callback.answer("Пользователь не найден", show_alert=True)
             return
         
-        subscription = Subscription(
-            user_id=user.id,
-            tariff_type="unlimited",
-            days_total=0,
-            expires_at=None,
-            is_gift=True
-        )
+        # Создаём подписку
+        if days:
+            expires_at = datetime.utcnow() + timedelta(days=days)
+            subscription = Subscription(
+                user_id=user.id,
+                tariff_type=tariff_type,
+                days_total=days,
+                expires_at=expires_at,
+                is_gift=True
+            )
+            user_msg += f"\n\n📅 Действует до: {expires_at.strftime('%d.%m.%Y')}"
+        else:
+            subscription = Subscription(
+                user_id=user.id,
+                tariff_type=tariff_type,
+                days_total=0,
+                expires_at=None,
+                is_gift=True
+            )
         session.add(subscription)
         
+        # Создаём конфиг если нет
         config_created = False
+        config_name = None
         if not user.configs:
-            config_name = f"user_{user.id}_gift"
+            config_name = user.username if user.username else f"user{user.telegram_id}"
             success, config_data, msg = await WireGuardService.create_config(config_name)
             
             if success:
@@ -720,6 +784,7 @@ async def admin_gift(callback: CallbackQuery, bot: Bot):
                 session.add(config)
                 config_created = True
         else:
+            # Активируем неактивные конфиги
             for cfg in user.configs:
                 if not cfg.is_active:
                     success, msg = await WireGuardService.enable_config(
@@ -730,18 +795,24 @@ async def admin_gift(callback: CallbackQuery, bot: Bot):
         
         await session.commit()
         
-        await callback.answer("🎁 Бессрочный тариф выдан!")
+        await callback.answer(f"🎁 Подарено: {gift_text}!")
         
+        # Возвращаемся в админское меню пользователя
+        user_info = f"@{user.username}" if user.username else user.full_name
+        await callback.message.edit_text(
+            f"✅ *Подписка подарена!*\n\n"
+            f"👤 Пользователь: {user_info}\n"
+            f"🎁 Подарок: {gift_text}",
+            parse_mode="Markdown",
+            reply_markup=get_user_detail_kb(user_id)
+        )
+        
+        # Отправляем уведомление пользователю
         try:
-            msg_text = (
-                "🎁 *Вам подарен бессрочный VPN!*\n\n"
-                "Ваша подписка теперь не имеет срока действия.\n"
-            )
-            
             if config_created:
-                msg_text += "\nСейчас отправлю вам конфиг."
+                user_msg += "\n\nСейчас отправлю тебе конфиг."
             
-            await bot.send_message(user.telegram_id, msg_text, parse_mode="Markdown")
+            await bot.send_message(user.telegram_id, user_msg, parse_mode="Markdown")
             
             if config_created and not LOCAL_MODE:
                 config_path = WireGuardService.get_config_file_path(config_name)
@@ -751,7 +822,7 @@ async def admin_gift(callback: CallbackQuery, bot: Bot):
                     await bot.send_document(
                         user.telegram_id,
                         FSInputFile(config_path),
-                        caption="📄 Ваш WireGuard конфиг"
+                        caption="📄 Твой WireGuard конфиг"
                     )
                 
                 if os.path.exists(qr_path):
@@ -761,9 +832,14 @@ async def admin_gift(callback: CallbackQuery, bot: Bot):
                         caption="📷 QR-код для быстрой настройки"
                     )
             
+            menu_text = (
+                "Всё управление VPN — кнопками ниже:\n\n"
+                "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
+                "📊 *Подписка* — детали подписки и продление"
+            )
             await bot.send_message(
                 user.telegram_id,
-                "🏠 *Главное меню*",
+                menu_text,
                 parse_mode="Markdown",
                 reply_markup=get_main_menu_kb(user.telegram_id, True)
             )
@@ -789,7 +865,7 @@ async def admin_add_config(callback: CallbackQuery, bot: Bot):
             return
         
         config_num = len(user.configs) + 1
-        config_name = f"user_{user.id}_{config_num}"
+        config_name = f"{user.username or 'user' + str(user.telegram_id)}_{config_num}"
         
         success, config_data, msg = await WireGuardService.create_config(config_name)
         
@@ -814,7 +890,7 @@ async def admin_add_config(callback: CallbackQuery, bot: Bot):
         try:
             await bot.send_message(
                 user.telegram_id,
-                f"📱 *Вам добавлен новый конфиг!*\n\n"
+                f"📱 *Тебе добавлен новый конфиг!*\n\n"
                 f"Имя: `{config_name}`",
                 parse_mode="Markdown"
             )
@@ -827,7 +903,7 @@ async def admin_add_config(callback: CallbackQuery, bot: Bot):
                     await bot.send_document(
                         user.telegram_id,
                         FSInputFile(config_path),
-                        caption="📄 Ваш WireGuard конфиг"
+                        caption="📄 Твой WireGuard конфиг"
                     )
                 
                 if os.path.exists(qr_path):
@@ -1004,7 +1080,7 @@ async def cmd_gift(message: Message, bot: Bot):
         
         config_created = False
         if not configs:
-            config_name = f"user_{user.id}_gift"
+            config_name = user.username if user.username else f"user{user.telegram_id}"
             success, config_data, msg = await WireGuardService.create_config(config_name)
             
             if success:
@@ -1035,12 +1111,12 @@ async def cmd_gift(message: Message, bot: Bot):
         
         try:
             msg_text = (
-                "🎁 *Вам подарен бессрочный VPN!*\n\n"
-                "Ваша подписка теперь не имеет срока действия.\n"
+                "🎁 *Тебе подарен бессрочный VPN!*\n\n"
+                "Твоя подписка теперь не имеет срока действия.\n"
             )
             
             if config_created:
-                msg_text += "\nСейчас отправлю вам конфиг."
+                msg_text += "\nСейчас отправлю тебе конфиг."
             
             await bot.send_message(user.telegram_id, msg_text, parse_mode="Markdown")
             
@@ -1052,7 +1128,7 @@ async def cmd_gift(message: Message, bot: Bot):
                     await bot.send_document(
                         user.telegram_id,
                         FSInputFile(config_path),
-                        caption="📄 Ваш WireGuard конфиг"
+                        caption="📄 Твой WireGuard конфиг"
                     )
                 
                 if os.path.exists(qr_path):
@@ -1062,9 +1138,14 @@ async def cmd_gift(message: Message, bot: Bot):
                         caption="📷 QR-код для быстрой настройки"
                     )
             
+            menu_text = (
+                "👋 Привет!\n\n"
+                "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
+                "📊 *Подписка* — детали подписки и продление"
+            )
             await bot.send_message(
                 user.telegram_id,
-                "🏠 *Главное меню*",
+                menu_text,
                 parse_mode="Markdown",
                 reply_markup=get_main_menu_kb(user.telegram_id, True)
             )
@@ -1099,14 +1180,14 @@ async def admin_approve_config_request(callback: CallbackQuery, bot: Bot):
     device_match = re.search(r'🖥 Устройство: (.+?)$', callback.message.text, re.MULTILINE)
     device_name = device_match.group(1).strip() if device_match else None
     
-    # Формируем имя конфига: username + device или username + номер
-    base_name = user_username if user_username else str(user_telegram_id)
+    # Формируем имя конфига: username_device
+    base_name = user_username if user_username else f"user{user_telegram_id}"
     if device_name:
         # Очищаем название устройства от спецсимволов, оставляем только буквы и цифры
         clean_device = re.sub(r'[^\w]', '', device_name)[:15]
-        config_name = f"{base_name}{clean_device}"
+        config_name = f"{base_name}_{clean_device}"
     else:
-        config_name = f"{base_name}{config_count + 1}" if config_count > 0 else base_name
+        config_name = f"{base_name}_{config_count + 1}" if config_count > 0 else base_name
     
     success, config_data, msg = await WireGuardService.create_config(config_name)
     
@@ -1156,34 +1237,25 @@ async def admin_approve_config_request(callback: CallbackQuery, bot: Bot):
         pass
     
     try:
-        await bot.send_message(
-            user_telegram_id,
-            f"✅ Дополнительный конфиг создан!\n\n"
-            f"Конфиг: {config_name}\n"
-            f"Сейчас отправлю файлы."
-        )
-        
+        # Отправляем конфиг пользователю (без QR-кода — его можно найти в меню "Конфиги")
         if not LOCAL_MODE:
             config_path = WireGuardService.get_config_file_path(config_name)
-            qr_path = WireGuardService.get_qr_file_path(config_name)
             
             if os.path.exists(config_path):
                 await bot.send_document(
                     user_telegram_id,
                     FSInputFile(config_path),
-                    caption="📄 Ваш WireGuard конфиг"
-                )
-            
-            if os.path.exists(qr_path):
-                await bot.send_photo(
-                    user_telegram_id,
-                    FSInputFile(qr_path),
-                    caption="📷 QR-код для быстрой настройки"
+                    caption=f"📄 Твой новый конфиг: {config_name}\n\n📷 QR-код можно найти в меню «Конфиги»"
                 )
         
+        menu_text = (
+            "Всё управление VPN — кнопками ниже:\n\n"
+            "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
+            "📊 *Подписка* — детали подписки и продление"
+        )
         await bot.send_message(
             user_telegram_id,
-            "🏠 *Главное меню*",
+            menu_text,
             parse_mode="Markdown",
             reply_markup=get_main_menu_kb(user_telegram_id, True)
         )
@@ -1239,14 +1311,17 @@ async def admin_settings(callback: CallbackQuery):
     await callback.answer()
     password_enabled = await get_setting("password_enabled") == "1"
     channel_required = await get_setting("channel_required") == "1"
+    config_approval = await get_setting("config_approval_required") != "0"
     
     password_status = "🟢 Вкл" if password_enabled else "🔴 Выкл"
     channel_status = "🟢 Вкл" if channel_required else "🔴 Выкл"
+    config_approval_status = "🟢 Вкл" if config_approval else "🔴 Выкл"
     
     await callback.message.edit_text(
         f"⚙️ *Настройки бота*\n\n"
         f"🔑 Пароль: {password_status}\n"
-        f"📢 Подписка на канал: {channel_status}",
+        f"📢 Подписка на канал: {channel_status}\n"
+        f"📋 Подтверждение доп. конфига: {config_approval_status}",
         parse_mode="Markdown",
         reply_markup=get_settings_kb()
     )
@@ -1454,6 +1529,60 @@ async def settings_phone_off(callback: CallbackQuery):
     )
 
 
+@router.callback_query(F.data == "settings_config_approval")
+async def settings_config_approval(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    config_approval = await get_setting("config_approval_required") != "0"
+    
+    status = "🟢 Включено" if config_approval else "🔴 Выключено"
+    desc = "_Требуется подтверждение админа_" if config_approval else "_Конфиг создаётся автоматически_"
+    
+    await callback.message.edit_text(
+        f"📋 *Подтверждение доп. конфига*\n\n"
+        f"Статус: {status}\n\n"
+        f"{desc}",
+        parse_mode="Markdown",
+        reply_markup=get_config_approval_kb(config_approval)
+    )
+
+
+@router.callback_query(F.data == "settings_config_approval_on")
+async def settings_config_approval_on(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await set_setting("config_approval_required", "1")
+    await callback.answer("✅ Подтверждение включено")
+    
+    await callback.message.edit_text(
+        f"📋 *Подтверждение доп. конфига*\n\n"
+        f"Статус: 🟢 Включено\n\n"
+        f"_Требуется подтверждение админа_",
+        parse_mode="Markdown",
+        reply_markup=get_config_approval_kb(True)
+    )
+
+
+@router.callback_query(F.data == "settings_config_approval_off")
+async def settings_config_approval_off(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await set_setting("config_approval_required", "0")
+    await callback.answer("✅ Подтверждение выключено")
+    
+    await callback.message.edit_text(
+        f"📋 *Подтверждение доп. конфига*\n\n"
+        f"Статус: 🔴 Выключено\n\n"
+        f"_Конфиг создаётся автоматически_",
+        parse_mode="Markdown",
+        reply_markup=get_config_approval_kb(False)
+    )
+
+
 @router.callback_query(F.data == "settings_monitoring")
 async def settings_monitoring(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -1613,3 +1742,219 @@ async def process_configs_threshold(message: Message, state: FSMContext):
         )
     except ValueError:
         await message.answer("❌ Введите число")
+
+
+@router.callback_query(F.data == "admin_broadcast")
+async def admin_broadcast(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    await callback.message.edit_text(
+        "✉️ *Рассылка сообщений*\n\n"
+        "Выбери кому отправить:",
+        parse_mode="Markdown",
+        reply_markup=get_broadcast_menu_kb()
+    )
+
+
+@router.callback_query(F.data == "broadcast_all")
+async def broadcast_all(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    await state.set_state(AdminStates.waiting_for_broadcast_all)
+    
+    await callback.message.edit_text(
+        "📢 *Рассылка всем пользователям*\n\n"
+        "Отправь сообщение, которое хочешь разослать.\n"
+        "Можно отправить:\n"
+        "• Текст\n"
+        "• Фото\n"
+        "• Голосовое\n"
+        "• Кружок (видеосообщение)",
+        parse_mode="Markdown",
+        reply_markup=get_broadcast_cancel_kb()
+    )
+
+
+@router.callback_query(F.data == "broadcast_select")
+async def broadcast_select(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.is_blocked == False)
+        result = await session.execute(stmt)
+        users = result.scalars().all()
+    
+    await callback.message.edit_text(
+        "👤 *Выбери пользователя:*",
+        parse_mode="Markdown",
+        reply_markup=get_broadcast_users_kb(users)
+    )
+
+
+@router.callback_query(F.data.startswith("broadcast_page_"))
+async def broadcast_page(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    
+    page = int(callback.data.replace("broadcast_page_", ""))
+    await callback.answer()
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.is_blocked == False)
+        result = await session.execute(stmt)
+        users = result.scalars().all()
+    
+    await callback.message.edit_text(
+        "👤 *Выбери пользователя:*",
+        parse_mode="Markdown",
+        reply_markup=get_broadcast_users_kb(users, page)
+    )
+
+
+@router.callback_query(F.data.startswith("broadcast_user_"))
+async def broadcast_user_select(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    
+    user_telegram_id = int(callback.data.replace("broadcast_user_", ""))
+    await callback.answer()
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.telegram_id == user_telegram_id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+    
+    if not user:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+    
+    await state.update_data(broadcast_user_id=user_telegram_id)
+    await state.set_state(AdminStates.waiting_for_broadcast_user)
+    
+    name = user.username or user.full_name
+    await callback.message.edit_text(
+        f"📨 *Сообщение для @{name}*\n\n"
+        "Отправь сообщение, которое хочешь отправить.\n"
+        "Можно отправить:\n"
+        "• Текст\n"
+        "• Фото\n"
+        "• Голосовое\n"
+        "• Кружок (видеосообщение)",
+        parse_mode="Markdown",
+        reply_markup=get_broadcast_cancel_kb()
+    )
+
+
+@router.message(AdminStates.waiting_for_broadcast_all)
+async def process_broadcast_all(message: Message, state: FSMContext, bot: Bot):
+    if not is_admin(message.from_user.id):
+        return
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.is_blocked == False)
+        result = await session.execute(stmt)
+        users = result.scalars().all()
+    
+    success = 0
+    failed = 0
+    
+    for user in users:
+        try:
+            if message.text:
+                await bot.send_message(user.telegram_id, message.text)
+            elif message.photo:
+                await bot.send_photo(
+                    user.telegram_id,
+                    message.photo[-1].file_id,
+                    caption=message.caption
+                )
+            elif message.voice:
+                await bot.send_voice(user.telegram_id, message.voice.file_id)
+            elif message.video_note:
+                await bot.send_video_note(user.telegram_id, message.video_note.file_id)
+            elif message.video:
+                await bot.send_video(
+                    user.telegram_id,
+                    message.video.file_id,
+                    caption=message.caption
+                )
+            elif message.document:
+                await bot.send_document(
+                    user.telegram_id,
+                    message.document.file_id,
+                    caption=message.caption
+                )
+            success += 1
+        except Exception as e:
+            logger.error(f"Ошибка отправки пользователю {user.telegram_id}: {e}")
+            failed += 1
+    
+    await state.clear()
+    await message.answer(
+        f"✅ *Рассылка завершена*\n\n"
+        f"📨 Отправлено: {success}\n"
+        f"❌ Ошибок: {failed}",
+        parse_mode="Markdown",
+        reply_markup=get_broadcast_menu_kb()
+    )
+
+
+@router.message(AdminStates.waiting_for_broadcast_user)
+async def process_broadcast_user(message: Message, state: FSMContext, bot: Bot):
+    if not is_admin(message.from_user.id):
+        return
+    
+    data = await state.get_data()
+    user_telegram_id = data.get("broadcast_user_id")
+    
+    if not user_telegram_id:
+        await state.clear()
+        await message.answer("❌ Ошибка: пользователь не выбран")
+        return
+    
+    try:
+        if message.text:
+            await bot.send_message(user_telegram_id, message.text)
+        elif message.photo:
+            await bot.send_photo(
+                user_telegram_id,
+                message.photo[-1].file_id,
+                caption=message.caption
+            )
+        elif message.voice:
+            await bot.send_voice(user_telegram_id, message.voice.file_id)
+        elif message.video_note:
+            await bot.send_video_note(user_telegram_id, message.video_note.file_id)
+        elif message.video:
+            await bot.send_video(
+                user_telegram_id,
+                message.video.file_id,
+                caption=message.caption
+            )
+        elif message.document:
+            await bot.send_document(
+                user_telegram_id,
+                message.document.file_id,
+                caption=message.caption
+            )
+        
+        await state.clear()
+        await message.answer(
+            "✅ *Сообщение отправлено!*",
+            parse_mode="Markdown",
+            reply_markup=get_broadcast_menu_kb()
+        )
+    except Exception as e:
+        logger.error(f"Ошибка отправки пользователю {user_telegram_id}: {e}")
+        await state.clear()
+        await message.answer(
+            f"❌ Ошибка отправки: {e}",
+            reply_markup=get_broadcast_menu_kb()
+        )

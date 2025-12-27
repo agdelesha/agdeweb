@@ -2,7 +2,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import TARIFFS, ADMIN_ID
 
 
-def get_main_menu_kb(user_id: int = None, has_subscription: bool = False) -> InlineKeyboardMarkup:
+def get_main_menu_kb(user_id: int = None, has_subscription: bool = False, how_to_seen: bool = False) -> InlineKeyboardMarkup:
     buttons = []
     
     if not has_subscription:
@@ -13,8 +13,8 @@ def get_main_menu_kb(user_id: int = None, has_subscription: bool = False) -> Inl
         InlineKeyboardButton(text="📊 Подписка", callback_data="my_subscription")
     ])
     
-    if has_subscription:
-        buttons.append([InlineKeyboardButton(text="💳 Продлить", callback_data="extend_subscription")])
+    if not how_to_seen:
+        buttons.append([InlineKeyboardButton(text="❓ а как?", callback_data="how_to")])
     
     if user_id == ADMIN_ID:
         buttons.append([InlineKeyboardButton(text="🔧 Админ", callback_data="admin_menu")])
@@ -53,6 +53,34 @@ def get_back_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def get_subscription_kb(has_active: bool = True) -> InlineKeyboardMarkup:
+    buttons = []
+    if has_active:
+        buttons.append([InlineKeyboardButton(text="💳 Продлить", callback_data="extend_subscription")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_how_to_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да понял я, понял", callback_data="how_to_understood")]
+    ])
+
+
+def get_no_configs_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Получить конфиг", callback_data="get_vpn")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
+    ])
+
+
+def get_no_subscription_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Получить конфиг", callback_data="get_vpn")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
+    ])
+
+
 def get_configs_kb(configs: list) -> InlineKeyboardMarkup:
     buttons = []
     for config in configs:
@@ -73,3 +101,27 @@ def get_config_detail_kb(config_id: int, is_active: bool) -> InlineKeyboardMarku
     ]
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="my_configs")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_welcome_kb(show_trial: bool = True) -> InlineKeyboardMarkup:
+    """Клавиатура приветствия для новых пользователей без подписки"""
+    buttons = []
+    if show_trial:
+        buttons.append([InlineKeyboardButton(text="🎁 Пробный доступ", callback_data="funnel_trial")])
+    buttons.append([InlineKeyboardButton(text="💳 Тарифы", callback_data="funnel_tariffs")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_trial_activated_kb() -> InlineKeyboardMarkup:
+    """Клавиатура после активации пробного периода"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📥 Получить", callback_data="funnel_get_config")]
+    ])
+
+
+def get_after_config_kb() -> InlineKeyboardMarkup:
+    """Клавиатура после получения конфига (для пробного периода)"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Купить подписку", callback_data="funnel_tariffs")],
+        [InlineKeyboardButton(text="❓ а как?", callback_data="how_to")]
+    ])
