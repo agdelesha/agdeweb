@@ -27,6 +27,26 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def transliterate_ru_to_en(text: str) -> str:
+    """Транслитерация русских букв в английские"""
+    translit_map = {
+        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
+        'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
+        'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+        'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch', 'ъ': '',
+        'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
+        'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'E',
+        'Ж': 'Zh', 'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M',
+        'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U',
+        'Ф': 'F', 'Х': 'H', 'Ц': 'Ts', 'Ч': 'Ch', 'Ш': 'Sh', 'Щ': 'Sch', 'Ъ': '',
+        'Ы': 'Y', 'Ь': '', 'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya'
+    }
+    result = []
+    for char in text:
+        result.append(translit_map.get(char, char))
+    return ''.join(result)
+
+
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
 
@@ -1180,11 +1200,12 @@ async def admin_approve_config_request(callback: CallbackQuery, bot: Bot):
     device_match = re.search(r'🖥 Устройство: (.+?)$', callback.message.text, re.MULTILINE)
     device_name = device_match.group(1).strip() if device_match else None
     
-    # Формируем имя конфига: usernamedevice (без подчёркивания)
+    # Формируем имя конфига: usernamedevice (транслитерация + очистка)
     base_name = user_username if user_username else f"user{user_telegram_id}"
     if device_name:
-        # Очищаем название устройства от спецсимволов, оставляем только буквы и цифры
-        clean_device = re.sub(r'[^\w]', '', device_name)[:15]
+        # Транслитерируем русские буквы и очищаем от спецсимволов
+        device_translit = transliterate_ru_to_en(device_name)
+        clean_device = re.sub(r'[^\w]', '', device_translit)[:15]
         config_name = f"{base_name}{clean_device}"
     else:
         config_name = f"{base_name}{config_count + 1}" if config_count > 0 else base_name

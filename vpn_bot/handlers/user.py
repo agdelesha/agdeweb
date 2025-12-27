@@ -49,6 +49,26 @@ async def save_bot_message(state: FSMContext, message_id: int):
     await state.update_data(bot_messages=msg_ids)
 
 
+def transliterate_ru_to_en(text: str) -> str:
+    """Транслитерация русских букв в английские"""
+    translit_map = {
+        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
+        'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
+        'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+        'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch', 'ъ': '',
+        'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
+        'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'E',
+        'Ж': 'Zh', 'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M',
+        'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U',
+        'Ф': 'F', 'Х': 'H', 'Ц': 'Ts', 'Ч': 'Ch', 'Ш': 'Sh', 'Щ': 'Sch', 'Ъ': '',
+        'Ы': 'Y', 'Ь': '', 'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya'
+    }
+    result = []
+    for char in text:
+        result.append(translit_map.get(char, char))
+    return ''.join(result)
+
+
 async def get_or_create_user(telegram_id: int, username: str, full_name: str) -> tuple:
     """Returns (user, is_new_user)"""
     async with async_session() as session:
@@ -827,6 +847,8 @@ async def tariff_selected(callback: CallbackQuery, state: FSMContext):
         return
     
     await state.update_data(selected_tariff=tariff_key)
+    # Сразу устанавливаем состояние ожидания чека — можно отправить фото до нажатия кнопки
+    await state.set_state(PaymentStates.waiting_for_receipt)
     
     await callback.message.edit_text(
         f"💳 *Оплата тарифа: {tariff['name']}*\n\n"
@@ -1062,6 +1084,83 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
             parse_mode="Markdown",
             reply_markup=get_payment_review_kb(payment_id)
         )
+
+
+@router.message(PaymentStates.waiting_for_receipt, F.document)
+async def process_receipt_document(message: Message, state: FSMContext, bot: Bot):
+    """Обработка документов (PDF и др.) — отправляем админу на ручную проверку"""
+    data = await state.get_data()
+    tariff_key = data.get("selected_tariff")
+    
+    if not tariff_key or tariff_key not in TARIFFS:
+        await message.answer("❌ Ошибка: тариф не выбран. Начните сначала.")
+        await state.clear()
+        return
+    
+    tariff = TARIFFS[tariff_key]
+    document = message.document
+    
+    user_id = None
+    user_telegram_id = message.from_user.id
+    user_username = message.from_user.username
+    user_phone = None
+    payment_id = None
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.telegram_id == message.from_user.id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await message.answer("❌ Ошибка: пользователь не найден")
+            return
+        
+        user_id = user.id
+        user_phone = user.phone
+        
+        # Создаём платёж со статусом pending (ручная проверка)
+        payment = Payment(
+            user_id=user.id,
+            tariff_type=tariff_key,
+            amount=tariff["price"],
+            receipt_file_id=document.file_id,
+            ocr_result=f"Документ: {document.file_name or 'без имени'}",
+            status="pending"
+        )
+        session.add(payment)
+        await session.commit()
+        await session.refresh(payment)
+        payment_id = payment.id
+    
+    await state.clear()
+    
+    user_info = f"@{user_username}" if user_username else message.from_user.full_name
+    phone_info = f"📞 Телефон: `{user_phone}`" if user_phone and user_phone != "5553535" else "📞 Телефон: не указан"
+    
+    has_sub = await check_has_subscription(user_telegram_id)
+    await message.answer(
+        "✅ *Документ получен!*\n\n"
+        "Мы проверим его вручную и скоро напишем!",
+        parse_mode="Markdown",
+        reply_markup=get_main_menu_kb(user_telegram_id, has_sub)
+    )
+    
+    # Отправляем документ админу
+    await bot.send_document(
+        ADMIN_ID,
+        document.file_id,
+        caption=(
+            f"📄 *Новый платёж (документ, требует проверки)*\n\n"
+            f"👤 Пользователь: {user_info}\n"
+            f"🆔 ID: `{user_telegram_id}`\n"
+            f"{phone_info}\n"
+            f"📋 Тариф: {tariff['name']}\n"
+            f"💵 Сумма: {tariff['price']}₽\n\n"
+            f"📎 Файл: {document.file_name or 'без имени'}"
+        ),
+        parse_mode="Markdown",
+        reply_markup=get_payment_review_kb(payment_id)
+    )
 
 
 @router.callback_query(F.data == "my_configs")
@@ -1358,10 +1457,12 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
         )
     else:
         # Создаём конфиг автоматически
-        # Название: никустройство (очищенное от спецсимволов, без подчёркивания)
+        # Название: никустройство (транслитерация + очистка от спецсимволов)
         import re
         base_name = username or f"user{telegram_id}"
-        clean_device = re.sub(r'[^\w]', '', device_name)[:15]
+        # Транслитерируем русские буквы в английские
+        device_translit = transliterate_ru_to_en(device_name)
+        clean_device = re.sub(r'[^\w]', '', device_translit)[:15]
         config_name = f"{base_name}{clean_device}"
         
         success, config_data, msg = await WireGuardService.create_config(config_name)
