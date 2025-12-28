@@ -139,6 +139,43 @@ async def cmd_about(message: Message):
     )
 
 
+@router.message(Command("akak"))
+async def cmd_akak(message: Message, bot: Bot):
+    """Команда /akak — показать инструкцию"""
+    import pathlib
+    how_dir = pathlib.Path(__file__).parent.parent / "andhow"
+
+    await message.answer(
+        f"*{message.from_user.first_name}*, подключение занимает 1-2 минуты!\n\n"
+        "📲 *Скачать приложение WireGuard:*\n"
+        "— iPhone: https://apps.apple.com/app/id1441195209\n"
+        "— Другие устройства: https://www.wireguard.com/install/\n\n"
+        "💬 *Есть вопросы?* Просто напиши в чат — AI-помощник поможет!\n\n"
+        "👇 Подробная инструкция ниже:",
+        parse_mode="Markdown",
+        disable_web_page_preview=True
+    )
+
+    # Отправляем каждую картинку отдельно
+    for i in range(1, 5):
+        img_path = how_dir / f"{i}.jpg"
+        if img_path.exists():
+            await bot.send_photo(message.from_user.id, FSInputFile(str(img_path)))
+    
+    # Отправляем гифку
+    gif_path = how_dir / "5.gif"
+    if gif_path.exists():
+        await bot.send_animation(message.from_user.id, FSInputFile(str(gif_path)))
+    
+    # Показываем главное меню
+    has_sub = await check_has_subscription(message.from_user.id)
+    how_to_seen = await get_user_how_to_seen(message.from_user.id)
+    await message.answer(
+        "👆 Готово!",
+        reply_markup=get_main_menu_kb(message.from_user.id, has_sub, how_to_seen)
+    )
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     # Удаляем предыдущие сообщения бота
