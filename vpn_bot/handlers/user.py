@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 from typing import Optional
 from datetime import datetime, timedelta
@@ -22,6 +23,7 @@ from services.wireguard import WireGuardService
 from services.ocr import OCRService
 from services.settings import is_password_required, is_channel_required, get_bot_password, is_phone_required, is_config_approval_required
 from keyboards.admin_kb import get_payment_review_kb, get_config_request_kb, get_check_subscription_kb
+from utils import transliterate_ru_to_en
 
 CHANNEL_USERNAME = "agdevpn"
 
@@ -47,26 +49,6 @@ async def save_bot_message(state: FSMContext, message_id: int):
     msg_ids = data.get("bot_messages", [])
     msg_ids.append(message_id)
     await state.update_data(bot_messages=msg_ids)
-
-
-def transliterate_ru_to_en(text: str) -> str:
-    """Транслитерация русских букв в английские"""
-    translit_map = {
-        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
-        'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
-        'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
-        'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch', 'ъ': '',
-        'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
-        'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'E',
-        'Ж': 'Zh', 'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M',
-        'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U',
-        'Ф': 'F', 'Х': 'H', 'Ц': 'Ts', 'Ч': 'Ch', 'Ш': 'Sh', 'Щ': 'Sch', 'Ъ': '',
-        'Ы': 'Y', 'Ь': '', 'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya'
-    }
-    result = []
-    for char in text:
-        result.append(translit_map.get(char, char))
-    return ''.join(result)
 
 
 async def get_or_create_user(telegram_id: int, username: str, full_name: str) -> tuple:
@@ -212,6 +194,7 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         msg = await message.answer(
             f"Привет! 👋\n"
             f"Я помогу тебе подключить VPN\n\n"
+            f"💬 У меня есть встроенный AI-помощник — просто напиши любой вопрос в чат и я отвечу!\n\n"
             f"Выбери:",
             parse_mode="Markdown",
             reply_markup=get_welcome_kb(show_trial=True)
@@ -228,7 +211,8 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         menu_text = (
             "Всё управление VPN — кнопками ниже:\n\n"
             "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
-            "📊 *Подписка* — детали подписки и продление"
+            "📊 *Подписка* — детали подписки и продление\n\n"
+            "💬 Есть вопросы? Просто напиши — AI-помощник всегда на связи!"
         )
         msg = await message.answer(
             menu_text,
@@ -242,6 +226,7 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         msg = await message.answer(
             f"Привет! 👋\n"
             f"Я помогу тебе подключить VPN\n\n"
+            f"💬 У меня есть встроенный AI-помощник — просто напиши любой вопрос в чат и я отвечу!\n\n"
             f"Выбери:",
             parse_mode="Markdown",
             reply_markup=get_welcome_kb(show_trial=show_trial)
@@ -443,7 +428,8 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
         menu_text = (
             "Всё управление VPN — кнопками ниже:\n\n"
             "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
-            "📊 *Подписка* — детали подписки и продление"
+            "📊 *Подписка* — детали подписки и продление\n\n"
+            "💬 Есть вопросы? Просто напиши — AI-помощник всегда на связи!"
         )
         await callback.message.edit_text(
             menu_text,
@@ -470,27 +456,27 @@ async def how_to(callback: CallbackQuery, bot: Bot):
     await bot.send_message(
         callback.from_user.id,
         (
-            f"*{callback.from_user.first_name}*, всё просто:\n\n"
-            "1️⃣ Получаешь конфигурацию\n"
-            "2️⃣ Загружаешь её в WireGuard\n"
-            "3️⃣ В WireGuard выбираешь скачанную конфигурацию\n"
-            "4️⃣ Готово! 🎉\n\n"
+            f"*{callback.from_user.first_name}*, всё просто!\n\n"
             "📲 *Скачать WireGuard:*\n"
             "— iPhone: https://apps.apple.com/app/id1441195209\n"
             "— Другие устройства: https://www.wireguard.com/install/\n\n"
+            "💬 *Есть вопросы?* Просто напиши в чат — AI-помощник всегда поможет!\n\n"
             "👇 Подробная инструкция ниже:"
         ),
         parse_mode="Markdown",
         disable_web_page_preview=True
     )
 
-    image_paths = sorted([p for p in how_dir.iterdir() if p.is_file() and p.suffix.lower() in {".jpg", ".jpeg", ".png"}])
-    if not image_paths:
-        await bot.send_message(callback.from_user.id, "❌ Не нашёл картинки инструкции")
-        return
-
-    media = [InputMediaPhoto(media=FSInputFile(str(p))) for p in image_paths]
-    await bot.send_media_group(callback.from_user.id, media)
+    # Отправляем каждую картинку отдельно (1.jpg, 2.jpg, 3.jpg, 4.jpg)
+    for i in range(1, 5):
+        img_path = how_dir / f"{i}.jpg"
+        if img_path.exists():
+            await bot.send_photo(callback.from_user.id, FSInputFile(str(img_path)))
+    
+    # Отправляем гифку отдельно (5.gif)
+    gif_path = how_dir / "5.gif"
+    if gif_path.exists():
+        await bot.send_animation(callback.from_user.id, FSInputFile(str(gif_path)))
     
     # Отправляем сообщение с кнопкой "да понял я, понял"
     await bot.send_message(
@@ -532,7 +518,8 @@ async def how_to_understood(callback: CallbackQuery, bot: Bot):
         menu_text = (
             "Всё управление VPN — кнопками ниже:\n\n"
             "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
-            "📊 *Подписка* — детали подписки и продление"
+            "📊 *Подписка* — детали подписки и продление\n\n"
+            "💬 Есть вопросы? Просто напиши — AI-помощник всегда на связи!"
         )
         await bot.send_message(
             callback.from_user.id,
@@ -787,7 +774,8 @@ async def tariff_trial(callback: CallbackQuery, bot: Bot):
         menu_text = (
             "Всё управление VPN — кнопками ниже:\n\n"
             "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
-            "📊 *Подписка* — детали подписки и продление"
+            "📊 *Подписка* — детали подписки и продление\n\n"
+            "💬 Есть вопросы? Просто напиши — AI-помощник всегда на связи!"
         )
         await bot.send_message(
             callback.from_user.id,
@@ -1003,7 +991,8 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
         menu_text = (
             "Всё управление VPN — кнопками ниже:\n\n"
             "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
-            "📊 *Подписка* — детали подписки и продление"
+            "📊 *Подписка* — детали подписки и продление\n\n"
+            "💬 Есть вопросы? Просто напиши — AI-помощник всегда на связи!"
         )
         await message.answer(
             menu_text,
@@ -1424,7 +1413,6 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
     else:
         # Создаём конфиг автоматически
         # Название: никустройство (транслитерация + очистка от спецсимволов)
-        import re
         base_name = username or f"user{telegram_id}"
         # Транслитерируем русские буквы в английские
         device_translit = transliterate_ru_to_en(device_name)
@@ -1470,4 +1458,198 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
         await message.answer(
             "✅ Конфиг создан!",
             reply_markup=get_main_menu_kb(message.from_user.id, True)
+        )
+
+
+@router.message(F.text)
+async def handle_text_message(message: Message, state: FSMContext, bot: Bot):
+    """Обработчик текстовых сообщений для AI ассистента"""
+    from services.ai_assistant import get_ai_response, UserContext
+    
+    if not message.text or message.text.startswith('/'):
+        return
+    
+    try:
+        await message.bot.send_chat_action(message.chat.id, "typing")
+        
+        # Получаем контекст пользователя из БД
+        user = await get_user_by_telegram_id(message.from_user.id)
+        context = UserContext()
+        
+        if user:
+            context.trial_used = user.trial_used
+            context.configs_count = len(user.configs) if user.configs else 0
+            
+            # Проверяем активную подписку
+            if user.subscriptions:
+                for sub in user.subscriptions:
+                    if sub.expires_at and sub.expires_at > datetime.utcnow():
+                        context.has_subscription = True
+                        context.days_left = (sub.expires_at - datetime.utcnow()).days
+                        break
+        
+        # Передаём user_id и контекст для AI
+        ai_response = await get_ai_response(
+            message.text, 
+            user_id=message.from_user.id,
+            context=context
+        )
+        
+        # AI всегда возвращает текст (fallback при ошибках)
+        await message.answer(ai_response.text, parse_mode=None)
+        
+        # Обрабатываем действие от AI
+        if ai_response.action:
+            await handle_ai_action(message, state, bot, ai_response.action, context)
+    except Exception as e:
+        logger.error(f"Error in AI handler: {e}")
+        await message.answer(
+            "Извините, произошла ошибка. Попробуйте позже."
+        )
+
+
+async def handle_ai_action(message: Message, state: FSMContext, bot: Bot, action: str, context):
+    """Обработка действий от AI"""
+    from services.ai_assistant import UserContext
+    
+    if action == "activate_trial":
+        if not context.trial_used:
+            # Симулируем нажатие кнопки пробного периода
+            await activate_trial_from_ai(message, bot)
+        else:
+            await message.answer("Пробный период уже был использован. Выбери тариф для продолжения:")
+            await message.answer(
+                "📋 Выбери тарифный план:",
+                reply_markup=get_tariffs_kb(show_trial=False)
+            )
+    
+    elif action == "show_tariffs":
+        show_trial = not context.trial_used
+        await message.answer(
+            "📋 Выбери тарифный план:",
+            reply_markup=get_tariffs_kb(show_trial=show_trial)
+        )
+    
+    elif action == "show_configs":
+        if context.has_subscription:
+            user = await get_user_by_telegram_id(message.from_user.id)
+            if user and user.configs:
+                await message.answer(
+                    "📱 Твои конфиги:",
+                    reply_markup=get_configs_kb(user.configs)
+                )
+            else:
+                await message.answer("У тебя пока нет конфигов.")
+        else:
+            await message.answer("Сначала нужно оформить подписку, чтобы получить конфиг.")
+    
+    elif action == "show_subscription":
+        if context.has_subscription:
+            await message.answer(
+                f"📊 Твоя подписка активна!\n"
+                f"Осталось дней: {context.days_left}\n"
+                f"Конфигов: {context.configs_count}",
+                reply_markup=get_subscription_kb()
+            )
+        else:
+            await message.answer(
+                "У тебя нет активной подписки. Хочешь оформить?",
+                reply_markup=get_tariffs_kb(show_trial=not context.trial_used)
+            )
+    
+    elif action == "create_config":
+        if context.has_subscription:
+            # Спрашиваем название устройства для дополнительного конфига
+            await message.answer(
+                "📱 Для какого устройства создать конфиг?\n"
+                "(напиши название, например: iPhone, MacBook, Windows ПК)"
+            )
+            await state.set_state(ConfigRequestStates.waiting_for_device)
+        else:
+            # Нет подписки — предлагаем trial или тарифы
+            if not context.trial_used:
+                await message.answer("Сначала нужна подписка. Хочешь попробовать 7 дней бесплатно?")
+                await activate_trial_from_ai(message, bot)
+            else:
+                await message.answer(
+                    "Для создания конфига нужна активная подписка. Выбери тариф:",
+                    reply_markup=get_tariffs_kb(show_trial=False)
+                )
+
+
+async def activate_trial_from_ai(message: Message, bot: Bot):
+    """Активация пробного периода через AI"""
+    
+    user = await get_user_by_telegram_id(message.from_user.id)
+    
+    if not user or user.trial_used:
+        await message.answer("Пробный период уже использован.")
+        return
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.telegram_id == message.from_user.id)
+        result = await session.execute(stmt)
+        db_user = result.scalar_one_or_none()
+        
+        if not db_user:
+            return
+        
+        db_user.trial_used = True
+        
+        # Создаём подписку на 7 дней
+        trial_sub = Subscription(
+            user_id=db_user.id,
+            tariff_type="trial",
+            days_total=7,
+            expires_at=datetime.utcnow() + timedelta(days=7)
+        )
+        session.add(trial_sub)
+        await session.commit()
+    
+    # Создаём конфиг
+    username = message.from_user.username or f"user{message.from_user.id}"
+    config_name = username
+    
+    success, config_data, error_msg = await WireGuardService.create_config(config_name)
+    
+    if not success:
+        await message.answer(
+            f"Пробный период активирован, но произошла ошибка создания конфига: {error_msg}\n"
+            "Напиши @agdelesha для помощи."
+        )
+        return
+    
+    # Сохраняем конфиг в БД
+    async with async_session() as session:
+        stmt = select(User).where(User.telegram_id == message.from_user.id)
+        result = await session.execute(stmt)
+        db_user = result.scalar_one_or_none()
+        
+        if db_user:
+            new_config = Config(
+                user_id=db_user.id,
+                name=config_name,
+                public_key=config_data.public_key,
+                preshared_key=config_data.preshared_key,
+                allowed_ips=config_data.allowed_ips,
+                client_ip=config_data.client_ip,
+                is_active=True
+            )
+            session.add(new_config)
+            await session.commit()
+    
+    # Отправляем конфиг
+    if not LOCAL_MODE:
+        config_path = WireGuardService.get_config_file_path(config_name)
+        if os.path.exists(config_path):
+            await bot.send_document(
+                message.from_user.id,
+                FSInputFile(config_path),
+                caption="🎉 Пробный период активирован! Вот твой конфиг на 7 дней.\n\n"
+                        "Скачай WireGuard и импортируй этот файл."
+            )
+    else:
+        await message.answer(
+            "🎉 Пробный период активирован на 7 дней!\n"
+            "[LOCAL_MODE] Конфиг будет отправлен на сервере."
         )

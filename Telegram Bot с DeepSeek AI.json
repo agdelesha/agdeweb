@@ -1,0 +1,228 @@
+{
+  "name": "Telegram Bot с DeepSeek AI",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "cf1ab345-7b12-47f5-a595-b905faaca082",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -848,
+        624
+      ],
+      "webhookId": "telegram-webhook",
+      "credentials": {
+        "telegramApi": {
+          "id": "81yUGGbcmkniJdLz",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.message.text }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "97b5c6bf-1dd1-46a9-bf28-734b3cba4b4a",
+      "name": "Только текстовые сообщения",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -624,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "Обрабатываю ваш запрос... ⏳",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "e266c513-bbf4-4b74-be61-8648b2e3ad76",
+      "name": "Отправить статус",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -400,
+        512
+      ],
+      "webhookId": "e76aac79-b4da-473c-a8a9-a10694240027",
+      "credentials": {
+        "telegramApi": {
+          "id": "81yUGGbcmkniJdLz",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.deepseek.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"deepseek-chat\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Ты помощник VPN бота. Отвечай кратко и по делу на русском языке. Помогай пользователям с вопросами о VPN сервисе.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $json.user_text }}\"\n    }\n  ],\n  \"temperature\": 0.7,\n  \"max_tokens\": 500\n}",
+        "options": {}
+      },
+      "id": "16c9c306-f6d1-4463-b2a3-8684af5532ff",
+      "name": "DeepSeek API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -176,
+        512
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "Tz4b8916hAEnmNQl",
+          "name": "Bearer Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Извлекаем ответ от DeepSeek\nconst response = $input.item.json.choices[0].message.content;\nconst chatId = $('Telegram Trigger').item.json.message.chat.id;\nconst userName = $('Telegram Trigger').item.json.message.from.first_name || 'Пользователь';\n\nreturn {\n  chatId: chatId,\n  response: response,\n  userName: userName\n};"
+      },
+      "id": "316970df-c67f-404d-90c8-d186489c67d6",
+      "name": "Обработать ответ",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        48,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.response }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "0cb0fd04-92f0-4652-bf8b-666f1cd517c6",
+      "name": "Отправить ответ AI",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        272,
+        512
+      ],
+      "webhookId": "81f439e8-02c6-4799-84e0-6acac9456e13",
+      "credentials": {
+        "telegramApi": {
+          "id": "81yUGGbcmkniJdLz",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "Извините, произошла ошибка при обработке вашего запроса. Попробуйте позже.",
+        "additionalFields": {}
+      },
+      "id": "acbc6f8e-99c2-45e8-9042-6bb16f774b1c",
+      "name": "Отправить ошибку",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        48,
+        720
+      ],
+      "webhookId": "0ce7f2c3-79d3-424b-b3d5-356dc1b898e1",
+      "credentials": {
+        "telegramApi": {
+          "id": "81yUGGbcmkniJdLz",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Только текстовые сообщения",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Только текстовые сообщения": {
+      "main": [
+        [
+          {
+            "node": "Отправить статус",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Отправить статус": {
+      "main": [
+        [
+          {
+            "node": "DeepSeek API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DeepSeek API": {
+      "main": [
+        [
+          {
+            "node": "Обработать ответ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Обработать ответ": {
+      "main": [
+        [
+          {
+            "node": "Отправить ответ AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "9d333eac-2bbd-4ae0-a839-3bd20f567a05",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b440f2d74c1a1c243b171be456849165a1de9a8ef47fe0786334611f77351129"
+  },
+  "id": "No96ZBfG8JZLWcQ5",
+  "tags": []
+}

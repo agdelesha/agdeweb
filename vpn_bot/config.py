@@ -6,6 +6,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 PAYMENT_PHONE = os.getenv("PAYMENT_PHONE", "89992115019")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 
 WG_INTERFACE = os.getenv("WG_INTERFACE", "wg0")
 WG_CONF = os.getenv("WG_CONF", "/etc/wireguard/wg0.conf")
