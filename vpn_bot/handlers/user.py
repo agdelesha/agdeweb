@@ -193,7 +193,7 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         # Телефон не требуется — показываем воронку
         msg = await message.answer(
             f"Привет! 👋\n"
-            f"Я помогу тебе подключить VPN\n\n"
+            f"Я помогу тебе подключиться к сервису\n\n"
             f"💬 У меня есть встроенный AI-помощник — просто напиши любой вопрос в чат и я отвечу!\n\n"
             f"Выбери:",
             parse_mode="Markdown",
@@ -209,10 +209,10 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         # Есть подписка — главное меню
         how_to_seen = await get_user_how_to_seen(message.from_user.id)
         menu_text = (
-            "Всё управление VPN — кнопками ниже:\n\n"
-            "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
+            "Управление сервисом — кнопками ниже:\n\n"
+            "📱 *Конфиги* — параметры подключения, QR-коды\n"
             "📊 *Подписка* — детали подписки и продление\n\n"
-            "💬 Есть вопросы? Просто напиши — AI-помощник всегда на связи!"
+            "💬 Есть вопросы? Просто напиши — AI-помощник на связи!"
         )
         msg = await message.answer(
             menu_text,
@@ -225,7 +225,7 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         show_trial = not user.trial_used if user else True
         msg = await message.answer(
             f"Привет! 👋\n"
-            f"Я помогу тебе подключить VPN\n\n"
+            f"Я помогу тебе подключиться к сервису\n\n"
             f"💬 У меня есть встроенный AI-помощник — просто напиши любой вопрос в чат и я отвечу!\n\n"
             f"Выбери:",
             parse_mode="Markdown",
@@ -426,10 +426,10 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     if has_sub:
         how_to_seen = await get_user_how_to_seen(callback.from_user.id)
         menu_text = (
-            "Всё управление VPN — кнопками ниже:\n\n"
-            "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
+            "Управление сервисом — кнопками ниже:\n\n"
+            "📱 *Конфиги* — параметры подключения, QR-коды\n"
             "📊 *Подписка* — детали подписки и продление\n\n"
-            "💬 Есть вопросы? Просто напиши — AI-помощник всегда на связи!"
+            "💬 Есть вопросы? Просто напиши — AI-помощник на связи!"
         )
         await callback.message.edit_text(
             menu_text,
@@ -456,11 +456,11 @@ async def how_to(callback: CallbackQuery, bot: Bot):
     await bot.send_message(
         callback.from_user.id,
         (
-            f"*{callback.from_user.first_name}*, всё просто!\n\n"
-            "📲 *Скачать WireGuard:*\n"
+            f"*{callback.from_user.first_name}*, подключение занимает 1-2 минуты!\n\n"
+            "📲 *Скачать приложение WireGuard:*\n"
             "— iPhone: https://apps.apple.com/app/id1441195209\n"
             "— Другие устройства: https://www.wireguard.com/install/\n\n"
-            "💬 *Есть вопросы?* Просто напиши в чат — AI-помощник всегда поможет!\n\n"
+            "💬 *Есть вопросы?* Просто напиши в чат — AI-помощник поможет!\n\n"
             "👇 Подробная инструкция ниже:"
         ),
         parse_mode="Markdown",
@@ -516,10 +516,10 @@ async def how_to_understood(callback: CallbackQuery, bot: Bot):
         
         # Отправляем главное меню
         menu_text = (
-            "Всё управление VPN — кнопками ниже:\n\n"
-            "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
+            "Управление сервисом — кнопками ниже:\n\n"
+            "📱 *Конфиги* — параметры подключения, QR-коды\n"
             "📊 *Подписка* — детали подписки и продление\n\n"
-            "💬 Есть вопросы? Просто напиши — AI-помощник всегда на связи!"
+            "💬 Есть вопросы? Просто напиши — AI-помощник на связи!"
         )
         await bot.send_message(
             callback.from_user.id,
@@ -772,10 +772,10 @@ async def tariff_trial(callback: CallbackQuery, bot: Bot):
         
         how_to_seen = await get_user_how_to_seen(callback.from_user.id)
         menu_text = (
-            "Всё управление VPN — кнопками ниже:\n\n"
-            "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
+            "Управление сервисом — кнопками ниже:\n\n"
+            "📱 *Конфиги* — параметры подключения, QR-коды\n"
             "📊 *Подписка* — детали подписки и продление\n\n"
-            "💬 Есть вопросы? Просто напиши — AI-помощник всегда на связи!"
+            "💬 Есть вопросы? Просто напиши — AI-помощник на связи!"
         )
         await bot.send_message(
             callback.from_user.id,
@@ -989,10 +989,10 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
         
         how_to_seen = await get_user_how_to_seen(user_telegram_id)
         menu_text = (
-            "Всё управление VPN — кнопками ниже:\n\n"
-            "📱 *Конфиги* — информация о подключении, QR-коды и доп. конфигурации\n"
+            "Управление сервисом — кнопками ниже:\n\n"
+            "📱 *Конфиги* — параметры подключения, QR-коды\n"
             "📊 *Подписка* — детали подписки и продление\n\n"
-            "💬 Есть вопросы? Просто напиши — AI-помощник всегда на связи!"
+            "💬 Есть вопросы? Просто напиши — AI-помощник на связи!"
         )
         await message.answer(
             menu_text,
@@ -1353,13 +1353,13 @@ async def request_extra_config(callback: CallbackQuery, state: FSMContext, bot: 
             await callback.answer("❌ Нужна активная подписка для запроса конфига", show_alert=True)
             return
     
+    from keyboards.user_kb import get_device_selection_kb
     await callback.message.edit_text(
-        "📱 *Запрос дополнительного конфига*\n\n"
-        "Для какого устройства требуется конфиг?\n"
-        "(например: iPhone, MacBook, Windows ПК)",
-        parse_mode="Markdown"
+        "📱 *Дополнительный конфиг*\n\n"
+        "Выбери тип устройства:",
+        parse_mode="Markdown",
+        reply_markup=get_device_selection_kb()
     )
-    await state.set_state(ConfigRequestStates.waiting_for_device)
 
 
 @router.message(ConfigRequestStates.waiting_for_device)
@@ -1461,6 +1461,110 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
         )
 
 
+# Маппинг устройств
+DEVICE_NAMES = {
+    "phone": "phone",
+    "pc": "pc",
+    "tablet": "tablet",
+    "router": "router",
+    "tv": "tv"
+}
+
+
+@router.callback_query(F.data.startswith("device_"))
+async def process_device_selection(callback: CallbackQuery, bot: Bot):
+    """Обработка выбора устройства для дополнительного конфига"""
+    await callback.answer()
+    device_key = callback.data.replace("device_", "")
+    device_name = DEVICE_NAMES.get(device_key, device_key)
+    
+    async with async_session() as session:
+        stmt = select(User).where(
+            User.telegram_id == callback.from_user.id
+        ).options(selectinload(User.configs))
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await callback.message.edit_text("❌ Ошибка: пользователь не найден")
+            return
+        
+        user_id = user.id
+        user_phone = user.phone
+        config_count = len(user.configs)
+        config_names = [c.name for c in user.configs]
+        username = user.username
+        telegram_id = user.telegram_id
+    
+    # Проверяем, нужно ли подтверждение админа
+    if await is_config_approval_required():
+        user_info = f"@{callback.from_user.username}" if callback.from_user.username else callback.from_user.full_name
+        phone_info = f"📞 Телефон: {user_phone}" if user_phone and user_phone != "5553535" else "📞 Телефон: не указан"
+        configs_info = ", ".join(config_names) if config_names else "нет"
+        
+        await callback.message.edit_text(
+            "✅ Запрос отправлен!\n\n"
+            "Скоро создадим конфиг и пришлём тебе.",
+            reply_markup=get_main_menu_kb(callback.from_user.id, True)
+        )
+        
+        await bot.send_message(
+            ADMIN_ID,
+            f"📱 Запрос дополнительного конфига\n\n"
+            f"👤 Пользователь: {user_info}\n"
+            f"🆔 ID: {callback.from_user.id}\n"
+            f"{phone_info}\n"
+            f"📱 Текущие конфиги ({config_count}): {configs_info}\n\n"
+            f"🖥 Устройство: {device_name}",
+            reply_markup=get_config_request_kb(user_id)
+        )
+    else:
+        # Создаём конфиг автоматически
+        base_name = username or f"user{telegram_id}"
+        config_name = f"{base_name}{device_name}"
+        
+        success, config_data, msg = await WireGuardService.create_config(config_name)
+        
+        if not success:
+            await callback.message.edit_text(
+                f"❌ Ошибка создания конфига: {msg}\n\n"
+                "Напиши @agdelesha для помощи.",
+                reply_markup=get_main_menu_kb(callback.from_user.id, True)
+            )
+            return
+        
+        # Сохраняем конфиг в БД
+        async with async_session() as session:
+            new_config = Config(
+                user_id=user_id,
+                name=config_name,
+                public_key=config_data.public_key,
+                preshared_key=config_data.preshared_key,
+                allowed_ips=config_data.allowed_ips,
+                client_ip=config_data.client_ip,
+                is_active=True
+            )
+            session.add(new_config)
+            await session.commit()
+        
+        # Отправляем конфиг пользователю
+        if not LOCAL_MODE:
+            config_path = WireGuardService.get_config_file_path(config_name)
+            
+            if os.path.exists(config_path):
+                await bot.send_document(
+                    callback.from_user.id,
+                    FSInputFile(config_path),
+                    caption=f"📄 Твой новый конфиг\n\n📷 QR-код можно найти в меню «Конфиги»",
+                    parse_mode=None
+                )
+        
+        await callback.message.edit_text(
+            "✅ Конфиг создан!",
+            reply_markup=get_main_menu_kb(callback.from_user.id, True)
+        )
+
+
 @router.message(F.text)
 async def handle_text_message(message: Message, state: FSMContext, bot: Bot):
     """Обработчик текстовых сообщений для AI ассистента"""
@@ -1559,12 +1663,12 @@ async def handle_ai_action(message: Message, state: FSMContext, bot: Bot, action
     
     elif action == "create_config":
         if context.has_subscription:
-            # Спрашиваем название устройства для дополнительного конфига
+            # Показываем кнопки выбора устройства
+            from keyboards.user_kb import get_device_selection_kb
             await message.answer(
-                "📱 Для какого устройства создать конфиг?\n"
-                "(напиши название, например: iPhone, MacBook, Windows ПК)"
+                "📱 Выбери тип устройства:",
+                reply_markup=get_device_selection_kb()
             )
-            await state.set_state(ConfigRequestStates.waiting_for_device)
         else:
             # Нет подписки — предлагаем trial или тарифы
             if not context.trial_used:

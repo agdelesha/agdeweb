@@ -125,3 +125,15 @@ def get_after_config_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="💳 Купить подписку", callback_data="funnel_tariffs")],
         [InlineKeyboardButton(text="❓ а как?", callback_data="how_to")]
     ])
+
+
+def get_device_selection_kb() -> InlineKeyboardMarkup:
+    """Клавиатура выбора устройства для дополнительного конфига"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📱 Телефон", callback_data="device_phone")],
+        [InlineKeyboardButton(text="💻 ПК", callback_data="device_pc")],
+        [InlineKeyboardButton(text="📟 Планшет", callback_data="device_tablet")],
+        [InlineKeyboardButton(text="📡 Роутер", callback_data="device_router")],
+        [InlineKeyboardButton(text="📺 Смарт ТВ", callback_data="device_tv")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="my_configs")]
+    ])
