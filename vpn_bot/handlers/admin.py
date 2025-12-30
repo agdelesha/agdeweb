@@ -18,6 +18,7 @@ from keyboards.admin_kb import (
     get_phone_settings_kb, get_config_approval_kb, get_broadcast_menu_kb, 
     get_broadcast_cancel_kb, get_broadcast_users_kb, get_gift_menu_kb,
     get_servers_list_kb, get_server_detail_kb, get_server_confirm_delete_kb,
+    get_server_migrate_kb, get_migrate_confirm_kb,
     get_server_add_cancel_kb, get_server_install_kb, get_server_edit_kb,
     get_server_edit_cancel_kb, get_max_configs_cancel_kb, get_channel_change_cancel_kb,
     get_user_max_configs_cancel_kb, get_server_clients_kb, get_server_broadcast_cancel_kb,
@@ -2445,6 +2446,7 @@ async def admin_server_detail(callback: CallbackQuery):
         client_count = await WireGuardMultiService.get_server_client_count(session, server_id)
     
     status = "🟢 Активен" if server.is_active else "🔴 Отключен"
+    has_clients = client_count > 0
     
     text = (
         f"🖥 *{server.name}*\n\n"
@@ -2461,7 +2463,7 @@ async def admin_server_detail(callback: CallbackQuery):
     await callback.message.edit_text(
         text,
         parse_mode="Markdown",
-        reply_markup=get_server_detail_kb(server_id, server.is_active)
+        reply_markup=get_server_detail_kb(server_id, server.is_active, has_clients)
     )
 
 
@@ -3309,6 +3311,246 @@ async def process_broadcast_server(message: Message, state: FSMContext, bot: Bot
         f"❌ Ошибок: {failed}",
         parse_mode="Markdown",
         reply_markup=get_server_detail_kb(server_id, True)
+    )
+
+
+# ===== МИГРАЦИЯ КЛИЕНТОВ =====
+
+@router.callback_query(F.data.startswith("admin_server_migrate_"))
+async def admin_server_migrate(callback: CallbackQuery):
+    """Начало миграции клиентов с сервера"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    source_server_id = int(callback.data.replace("admin_server_migrate_", ""))
+    await callback.answer()
+    
+    async with async_session() as session:
+        # Получаем исходный сервер
+        stmt = select(Server).where(Server.id == source_server_id).options(selectinload(Server.configs))
+        result = await session.execute(stmt)
+        source_server = result.scalar_one_or_none()
+        
+        if not source_server:
+            await callback.message.edit_text("❌ Сервер не найден")
+            return
+        
+        client_count = len(source_server.configs)
+        if client_count == 0:
+            await callback.message.edit_text(
+                "❌ На этом сервере нет клиентов для миграции",
+                reply_markup=get_server_detail_kb(source_server_id, source_server.is_active, False)
+            )
+            return
+        
+        # Получаем другие активные серверы
+        stmt = select(Server).where(
+            Server.id != source_server_id,
+            Server.is_active == True
+        ).options(selectinload(Server.configs))
+        result = await session.execute(stmt)
+        target_servers = result.scalars().all()
+        
+        # Фильтруем серверы с достаточным количеством свободных мест
+        available_servers = []
+        for server in target_servers:
+            free_slots = server.max_clients - len(server.configs)
+            if free_slots > 0:
+                available_servers.append(server)
+        
+        if not available_servers:
+            await callback.message.edit_text(
+                "❌ Нет доступных серверов для миграции.\n\n"
+                "Все серверы либо отключены, либо заполнены.",
+                reply_markup=get_server_detail_kb(source_server_id, source_server.is_active, True)
+            )
+            return
+    
+    await callback.message.edit_text(
+        f"🔀 *Миграция клиентов*\n\n"
+        f"📤 С сервера: *{source_server.name}*\n"
+        f"👥 Клиентов: *{client_count}*\n\n"
+        f"Выберите сервер, на который перенести клиентов:",
+        parse_mode="Markdown",
+        reply_markup=get_server_migrate_kb(source_server_id, available_servers)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_migrate_to_"))
+async def admin_migrate_select_target(callback: CallbackQuery):
+    """Выбор целевого сервера для миграции"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    # Формат: admin_migrate_to_{source_id}_{target_id}
+    parts = callback.data.replace("admin_migrate_to_", "").split("_")
+    source_id = int(parts[0])
+    target_id = int(parts[1])
+    await callback.answer()
+    
+    async with async_session() as session:
+        # Получаем оба сервера
+        stmt = select(Server).where(Server.id == source_id).options(selectinload(Server.configs))
+        result = await session.execute(stmt)
+        source_server = result.scalar_one_or_none()
+        
+        stmt = select(Server).where(Server.id == target_id).options(selectinload(Server.configs))
+        result = await session.execute(stmt)
+        target_server = result.scalar_one_or_none()
+        
+        if not source_server or not target_server:
+            await callback.message.edit_text("❌ Сервер не найден")
+            return
+        
+        source_clients = len(source_server.configs)
+        target_free = target_server.max_clients - len(target_server.configs)
+        
+        # Проверяем что хватает места
+        can_migrate = min(source_clients, target_free)
+        
+        if can_migrate == 0:
+            await callback.message.edit_text(
+                f"❌ На сервере *{target_server.name}* нет свободных мест",
+                parse_mode="Markdown",
+                reply_markup=get_server_detail_kb(source_id, source_server.is_active, True)
+            )
+            return
+        
+        warning = ""
+        if can_migrate < source_clients:
+            warning = f"\n\n⚠️ *Внимание:* на целевом сервере только {target_free} мест, будет перенесено {can_migrate} из {source_clients} клиентов."
+    
+    await callback.message.edit_text(
+        f"🔀 *Подтверждение миграции*\n\n"
+        f"📤 С сервера: *{source_server.name}*\n"
+        f"📥 На сервер: *{target_server.name}*\n"
+        f"👥 Клиентов: *{can_migrate}*\n"
+        f"{warning}\n\n"
+        f"⚠️ Клиентам будут отправлены новые конфиги.\n"
+        f"Старые конфиги перестанут работать.",
+        parse_mode="Markdown",
+        reply_markup=get_migrate_confirm_kb(source_id, target_id, can_migrate)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_migrate_confirm_"))
+async def admin_migrate_confirm(callback: CallbackQuery, bot: Bot):
+    """Выполнение миграции клиентов"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    # Формат: admin_migrate_confirm_{source_id}_{target_id}
+    parts = callback.data.replace("admin_migrate_confirm_", "").split("_")
+    source_id = int(parts[0])
+    target_id = int(parts[1])
+    
+    await callback.answer("⏳ Миграция началась...")
+    await callback.message.edit_text("⏳ *Миграция в процессе...*\n\nЭто может занять несколько минут.", parse_mode="Markdown")
+    
+    migrated = 0
+    failed = 0
+    notified = 0
+    
+    async with async_session() as session:
+        # Получаем серверы
+        stmt = select(Server).where(Server.id == source_id).options(selectinload(Server.configs))
+        result = await session.execute(stmt)
+        source_server = result.scalar_one_or_none()
+        
+        stmt = select(Server).where(Server.id == target_id)
+        result = await session.execute(stmt)
+        target_server = result.scalar_one_or_none()
+        
+        if not source_server or not target_server:
+            await callback.message.edit_text("❌ Сервер не найден")
+            return
+        
+        # Получаем конфиги с пользователями
+        configs_to_migrate = []
+        for config in source_server.configs:
+            stmt = select(Config).where(Config.id == config.id).options(selectinload(Config.user))
+            result = await session.execute(stmt)
+            config_with_user = result.scalar_one_or_none()
+            if config_with_user:
+                configs_to_migrate.append(config_with_user)
+        
+        target_free = target_server.max_clients - await WireGuardMultiService.get_server_client_count(session, target_id)
+        
+        for config in configs_to_migrate[:target_free]:
+            try:
+                user = config.user
+                config_name = config.name
+                
+                # 1. Удаляем старый конфиг с исходного сервера
+                try:
+                    await WireGuardMultiService.delete_config_from_server(
+                        source_server.host,
+                        source_server.ssh_user,
+                        source_server.ssh_password,
+                        source_server.ssh_port,
+                        config.public_key,
+                        source_server.wg_interface
+                    )
+                except Exception as e:
+                    logger.warning(f"Ошибка удаления конфига с исходного сервера: {e}")
+                
+                # 2. Создаём новый конфиг на целевом сервере
+                success, new_config_data, msg = await WireGuardMultiService.create_config(config_name, session, target_id)
+                
+                if not success:
+                    logger.error(f"Ошибка создания конфига на целевом сервере: {msg}")
+                    failed += 1
+                    continue
+                
+                # 3. Обновляем запись в БД
+                config.server_id = target_id
+                config.public_key = new_config_data.public_key
+                config.preshared_key = new_config_data.preshared_key
+                config.allowed_ips = new_config_data.allowed_ips
+                config.client_ip = new_config_data.client_ip
+                
+                await session.commit()
+                migrated += 1
+                
+                # 4. Уведомляем пользователя и отправляем новый конфиг
+                if user and user.telegram_id:
+                    try:
+                        await bot.send_message(
+                            user.telegram_id,
+                            f"🔄 *Обновление конфига*\n\n"
+                            f"Твой конфиг *{config_name}* был перенесён на новый сервер.\n"
+                            f"Старый конфиг больше не работает.\n\n"
+                            f"Сейчас отправлю новый конфиг 👇",
+                            parse_mode="Markdown"
+                        )
+                        
+                        # Отправляем новый конфиг
+                        from services.wireguard_multi import send_config_file
+                        await send_config_file(
+                            bot, user.telegram_id, config_name, new_config_data, target_id,
+                            caption="📄 Твой новый WireGuard конфиг"
+                        )
+                        notified += 1
+                    except Exception as e:
+                        logger.error(f"Ошибка уведомления пользователя {user.telegram_id}: {e}")
+                
+            except Exception as e:
+                logger.error(f"Ошибка миграции конфига {config.name}: {e}")
+                failed += 1
+    
+    # Результат
+    await callback.message.edit_text(
+        f"✅ *Миграция завершена*\n\n"
+        f"📤 С сервера: *{source_server.name}*\n"
+        f"📥 На сервер: *{target_server.name}*\n\n"
+        f"✅ Перенесено: {migrated}\n"
+        f"❌ Ошибок: {failed}\n"
+        f"📨 Уведомлено: {notified}",
+        parse_mode="Markdown",
+        reply_markup=get_server_detail_kb(target_id, target_server.is_active, migrated > 0)
     )
 
 

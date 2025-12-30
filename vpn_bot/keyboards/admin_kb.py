@@ -301,7 +301,7 @@ def get_servers_list_kb(servers: list, client_counts: dict = None) -> InlineKeyb
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_server_detail_kb(server_id: int, is_active: bool) -> InlineKeyboardMarkup:
+def get_server_detail_kb(server_id: int, is_active: bool, has_clients: bool = False) -> InlineKeyboardMarkup:
     """Клавиатура детальной информации о сервере"""
     toggle_text = "🔴 Отключить" if is_active else "🟢 Включить"
     buttons = [
@@ -311,9 +311,12 @@ def get_server_detail_kb(server_id: int, is_active: bool) -> InlineKeyboardMarku
          InlineKeyboardButton(text="✉️ Сообщение", callback_data=f"admin_server_broadcast_{server_id}")],
         [InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"admin_server_edit_{server_id}")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data=f"admin_server_stats_{server_id}")],
-        [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"admin_server_delete_{server_id}")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_servers")],
     ]
+    # Кнопка миграции только если есть клиенты
+    if has_clients:
+        buttons.append([InlineKeyboardButton(text="🔀 Мигрировать клиентов", callback_data=f"admin_server_migrate_{server_id}")])
+    buttons.append([InlineKeyboardButton(text="🗑 Удалить", callback_data=f"admin_server_delete_{server_id}")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_servers")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -323,6 +326,32 @@ def get_server_confirm_delete_kb(server_id: int) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"admin_server_confirm_delete_{server_id}"),
             InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_server_{server_id}"),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_server_migrate_kb(source_server_id: int, target_servers: list) -> InlineKeyboardMarkup:
+    """Клавиатура выбора целевого сервера для миграции"""
+    buttons = []
+    for server in target_servers:
+        free_slots = server.max_clients - len(server.configs)
+        buttons.append([InlineKeyboardButton(
+            text=f"➡️ {server.name} (свободно: {free_slots})",
+            callback_data=f"admin_migrate_to_{source_server_id}_{server.id}"
+        )])
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_server_{source_server_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_migrate_confirm_kb(source_id: int, target_id: int, count: int) -> InlineKeyboardMarkup:
+    """Подтверждение миграции"""
+    buttons = [
+        [
+            InlineKeyboardButton(text=f"✅ Да, мигрировать {count} клиентов", callback_data=f"admin_migrate_confirm_{source_id}_{target_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_server_{source_id}"),
         ],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
