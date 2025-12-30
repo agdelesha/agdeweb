@@ -3676,7 +3676,7 @@ async def admin_migrate_confirm(callback: CallbackQuery, bot: Bot):
                     logger.warning(f"Ошибка удаления конфига с исходного сервера: {e}")
                 
                 # 2. Создаём новый конфиг на целевом сервере
-                success, new_config_data, msg = await WireGuardMultiService.create_config(config_name, session, target_id)
+                success, new_config_data, msg = await WireGuardMultiService.create_config(config_name, session, target_server)
                 
                 if not success:
                     logger.error(f"Ошибка создания конфига на целевом сервере: {msg}")
@@ -3732,7 +3732,7 @@ async def admin_migrate_confirm(callback: CallbackQuery, bot: Bot):
     )
 
 
-@router.callback_query(F.data.startswith("admin_srvuser_"))
+@router.callback_query(F.data.startswith("admin_srvuser_") & ~F.data.startswith("admin_srvuser_configs_"))
 async def admin_server_user_detail(callback: CallbackQuery):
     """Детальная информация о пользователе (из списка клиентов сервера)"""
     if not is_admin(callback.from_user.id):
@@ -3803,7 +3803,7 @@ async def admin_server_user_detail(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin_srvuser_configs_"))
 async def admin_server_user_configs(callback: CallbackQuery):
-    """Список конфигов пользователя (из контекста сервера)"""
+    """Список конфигов пользователя (из контекста сервера) - только конфиги с этого сервера"""
     if not is_admin(callback.from_user.id):
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
@@ -3815,22 +3815,19 @@ async def admin_server_user_configs(callback: CallbackQuery):
     await callback.answer()
     
     async with async_session() as session:
-        stmt = select(User).where(User.id == user_id).options(selectinload(User.configs))
+        # Получаем только конфиги пользователя с этого сервера
+        stmt = select(Config).where(Config.user_id == user_id, Config.server_id == server_id)
         result = await session.execute(stmt)
-        user = result.scalar_one_or_none()
+        configs = list(result.scalars().all())
     
-    if not user:
-        await callback.answer("Пользователь не найден", show_alert=True)
-        return
-    
-    if not user.configs:
-        await callback.answer("У пользователя нет конфигов", show_alert=True)
+    if not configs:
+        await callback.answer("У пользователя нет конфигов на этом сервере", show_alert=True)
         return
     
     await callback.message.edit_text(
-        f"📱 *Конфиги пользователя #{user.id}:*",
+        f"📱 *Конфиги пользователя на сервере ({len(configs)}):*",
         parse_mode="Markdown",
-        reply_markup=get_server_user_configs_kb(user.configs, user.id, server_id)
+        reply_markup=get_server_user_configs_kb(configs, user_id, server_id)
     )
 
 
