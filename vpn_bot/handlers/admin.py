@@ -22,7 +22,8 @@ from keyboards.admin_kb import (
     get_server_add_cancel_kb, get_server_install_kb, get_server_edit_kb,
     get_server_edit_cancel_kb, get_max_configs_cancel_kb, get_channel_change_cancel_kb,
     get_user_max_configs_cancel_kb, get_server_clients_kb, get_server_broadcast_cancel_kb,
-    get_server_user_detail_kb, get_referrals_list_kb, get_referral_detail_kb,
+    get_server_user_detail_kb, get_server_user_configs_kb, get_server_config_detail_kb,
+    get_referrals_list_kb, get_referral_detail_kb,
     get_referral_percent_cancel_kb, get_withdrawal_review_kb, get_withdrawals_list_kb
 )
 from keyboards.user_kb import get_main_menu_kb
@@ -3770,14 +3771,14 @@ async def admin_server_user_detail(callback: CallbackQuery):
         name = f"@{user.username}" if user.username else user.full_name
         phone_info = f"📞 {user.phone}" if user.phone and user.phone != "5553535" else "📞 не указан"
         
-        # Считаем оставшиеся дни из конфигов
+        # Считаем оставшиеся дни из подписок
         days_left = 0
-        if user.configs:
-            for config in user.configs:
-                if config.expires_at and config.expires_at > datetime.utcnow():
-                    config_days = (config.expires_at - datetime.utcnow()).days
-                    if config_days > days_left:
-                        days_left = config_days
+        if user.subscriptions:
+            for sub in user.subscriptions:
+                if sub.expires_at and sub.expires_at > datetime.utcnow():
+                    sub_days = (sub.expires_at - datetime.utcnow()).days
+                    if sub_days > days_left:
+                        days_left = sub_days
         
         if days_left > 0:
             days_info = f"✅ {days_left} дн."
@@ -3798,6 +3799,225 @@ async def admin_server_user_detail(callback: CallbackQuery):
             parse_mode="Markdown",
             reply_markup=get_server_user_detail_kb(user_id, server_id)
         )
+
+
+@router.callback_query(F.data.startswith("admin_srvuser_configs_"))
+async def admin_server_user_configs(callback: CallbackQuery):
+    """Список конфигов пользователя (из контекста сервера)"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    # Формат: admin_srvuser_configs_{server_id}_{user_id}
+    parts = callback.data.split("_")
+    server_id = int(parts[3])
+    user_id = int(parts[4])
+    await callback.answer()
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.id == user_id).options(selectinload(User.configs))
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+    
+    if not user:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+    
+    if not user.configs:
+        await callback.answer("У пользователя нет конфигов", show_alert=True)
+        return
+    
+    await callback.message.edit_text(
+        f"📱 *Конфиги пользователя #{user.id}:*",
+        parse_mode="Markdown",
+        reply_markup=get_server_user_configs_kb(user.configs, user.id, server_id)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_srvcfg_"))
+async def admin_server_config_detail(callback: CallbackQuery):
+    """Детальная информация о конфиге (из контекста сервера)"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    # Формат: admin_srvcfg_{server_id}_{config_id}
+    parts = callback.data.split("_")
+    server_id = int(parts[2])
+    config_id = int(parts[3])
+    await callback.answer()
+    
+    async with async_session() as session:
+        stmt = select(Config).where(Config.id == config_id).options(selectinload(Config.user))
+        result = await session.execute(stmt)
+        config = result.scalar_one_or_none()
+        
+        if not config:
+            await callback.answer("Конфиг не найден", show_alert=True)
+            return
+        
+        # Получаем информацию о сервере конфига
+        server_deleted = False
+        if config.server_id:
+            cfg_server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+            if cfg_server:
+                server_name = cfg_server.name
+            else:
+                server_name = "⚠️ Сервер удалён"
+                server_deleted = True
+        else:
+            server_name = "⚠️ Сервер бессрочно выбыл из работы"
+            server_deleted = True
+        
+        if server_deleted:
+            status = "🔴 Отключен"
+        else:
+            status = "🟢 Активен" if config.is_active else "🔴 Отключен"
+        
+        traffic_info = ""
+        if not LOCAL_MODE and not server_deleted:
+            traffic_stats = await WireGuardService.get_traffic_stats()
+            if config.public_key in traffic_stats:
+                stats = traffic_stats[config.public_key]
+                rx = WireGuardService.format_bytes(stats['received'])
+                tx = WireGuardService.format_bytes(stats['sent'])
+                traffic_info = f"\n📊 Трафик: ⬇️{rx} ⬆️{tx}"
+        
+        server_warning = ""
+        if server_deleted:
+            server_warning = "\n\n⚠️ *Этот конфиг больше не работает.*\nСервер бессрочно выбыл из работы."
+        
+        await callback.message.edit_text(
+            f"📱 *Конфиг: {config.name}*\n\n"
+            f"Статус: {status}\n"
+            f"🌍 Сервер: {server_name}\n"
+            f"IP: `{config.client_ip}`\n"
+            f"Создан: {format_date_moscow(config.created_at)}"
+            f"{traffic_info}"
+            f"{server_warning}",
+            parse_mode="Markdown",
+            reply_markup=get_server_config_detail_kb(config.id, config.user_id, server_id, config.is_active, server_deleted)
+        )
+
+
+@router.callback_query(F.data.startswith("admin_toggle_srvcfg_"))
+async def admin_toggle_server_config(callback: CallbackQuery):
+    """Включить/отключить конфиг (из контекста сервера)"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    # Формат: admin_toggle_srvcfg_{server_id}_{config_id}
+    parts = callback.data.split("_")
+    server_id = int(parts[3])
+    config_id = int(parts[4])
+    
+    async with async_session() as session:
+        stmt = select(Config).where(Config.id == config_id)
+        result = await session.execute(stmt)
+        config = result.scalar_one_or_none()
+        
+        if not config:
+            await callback.answer("Конфиг не найден", show_alert=True)
+            return
+        
+        if config.is_active:
+            success, msg = await WireGuardService.disable_config(config.public_key)
+            if success:
+                config.is_active = False
+                await session.commit()
+                await callback.answer("🔴 Конфиг отключен")
+            else:
+                await callback.answer(f"Ошибка: {msg}", show_alert=True)
+                return
+        else:
+            success, msg = await WireGuardService.enable_config(
+                config.public_key, config.preshared_key, config.allowed_ips
+            )
+            if success:
+                config.is_active = True
+                await session.commit()
+                await callback.answer("🟢 Конфиг включен")
+            else:
+                await callback.answer(f"Ошибка: {msg}", show_alert=True)
+                return
+        
+        # Обновляем сообщение
+        server_deleted = False
+        if config.server_id:
+            cfg_server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+            if cfg_server:
+                server_name = cfg_server.name
+            else:
+                server_name = "⚠️ Сервер удалён"
+                server_deleted = True
+        else:
+            server_name = "⚠️ Сервер бессрочно выбыл из работы"
+            server_deleted = True
+        
+        status = "🟢 Активен" if config.is_active else "🔴 Отключен"
+        
+        await callback.message.edit_text(
+            f"📱 *Конфиг: {config.name}*\n\n"
+            f"Статус: {status}\n"
+            f"🌍 Сервер: {server_name}\n"
+            f"IP: `{config.client_ip}`\n"
+            f"Создан: {format_date_moscow(config.created_at)}",
+            parse_mode="Markdown",
+            reply_markup=get_server_config_detail_kb(config.id, config.user_id, server_id, config.is_active, server_deleted)
+        )
+
+
+@router.callback_query(F.data.startswith("admin_delete_srvcfg_"))
+async def admin_delete_server_config(callback: CallbackQuery):
+    """Удалить конфиг (из контекста сервера)"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    # Формат: admin_delete_srvcfg_{server_id}_{config_id}
+    parts = callback.data.split("_")
+    server_id = int(parts[3])
+    config_id = int(parts[4])
+    
+    async with async_session() as session:
+        stmt = select(Config).where(Config.id == config_id).options(selectinload(Config.user))
+        result = await session.execute(stmt)
+        config = result.scalar_one_or_none()
+        
+        if not config:
+            await callback.answer("Конфиг не найден", show_alert=True)
+            return
+        
+        user_id = config.user_id
+        config_name = config.name
+        
+        # Удаляем с WireGuard сервера
+        if not LOCAL_MODE:
+            await WireGuardService.delete_config(config.public_key, config_name)
+        
+        # Удаляем из БД
+        await session.delete(config)
+        await session.commit()
+        
+        await callback.answer(f"✅ Конфиг {config_name} удалён")
+        
+        # Возвращаемся к списку конфигов пользователя
+        stmt = select(User).where(User.id == user_id).options(selectinload(User.configs))
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if user and user.configs:
+            await callback.message.edit_text(
+                f"📱 *Конфиги пользователя #{user.id}:*",
+                parse_mode="Markdown",
+                reply_markup=get_server_user_configs_kb(user.configs, user.id, server_id)
+            )
+        else:
+            # Нет больше конфигов - возвращаемся к пользователю
+            await callback.message.edit_text(
+                f"📱 У пользователя больше нет конфигов",
+                parse_mode="Markdown",
+                reply_markup=get_server_user_detail_kb(user_id, server_id)
+            )
 
 
 # ===== РЕФЕРАЛЫ =====

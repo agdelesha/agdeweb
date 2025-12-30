@@ -422,11 +422,35 @@ def get_server_clients_kb(users: list, server_id: int, page: int = 0, per_page: 
 def get_server_user_detail_kb(user_id: int, server_id: int) -> InlineKeyboardMarkup:
     """Клавиатура детальной информации о пользователе (из списка клиентов сервера)"""
     buttons = [
-        [InlineKeyboardButton(text="📱 Конфиги", callback_data=f"admin_user_configs_{user_id}")],
+        [InlineKeyboardButton(text="📱 Конфиги", callback_data=f"admin_srvuser_configs_{server_id}_{user_id}")],
         [InlineKeyboardButton(text="🎁 Подарить дни", callback_data=f"admin_gift_{user_id}")],
         [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"admin_delete_{user_id}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin_server_clients_{server_id}")],
     ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_server_user_configs_kb(configs: list, user_id: int, server_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура списка конфигов пользователя (из контекста сервера)"""
+    buttons = []
+    for config in configs:
+        status = "🟢" if config.is_active else "🔴"
+        buttons.append([InlineKeyboardButton(
+            text=f"{status} {config.name}",
+            callback_data=f"admin_srvcfg_{server_id}_{config.id}"
+        )])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin_srvuser_{server_id}_{user_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_server_config_detail_kb(config_id: int, user_id: int, server_id: int, is_active: bool, server_deleted: bool = False) -> InlineKeyboardMarkup:
+    """Клавиатура детальной информации о конфиге (из контекста сервера)"""
+    buttons = []
+    if not server_deleted:
+        toggle_text = "🔴 Отключить" if is_active else "🟢 Включить"
+        buttons.append([InlineKeyboardButton(text=toggle_text, callback_data=f"admin_toggle_srvcfg_{server_id}_{config_id}")])
+    buttons.append([InlineKeyboardButton(text="🗑 Удалить конфиг", callback_data=f"admin_delete_srvcfg_{server_id}_{config_id}")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin_srvuser_configs_{server_id}_{user_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
