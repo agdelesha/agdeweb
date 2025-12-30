@@ -60,11 +60,17 @@ def get_tariffs_kb(show_trial: bool = True, has_referral_discount: bool = False,
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_payment_kb() -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(text="📸 Отправить чек", callback_data="send_receipt")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_menu")],
-    ]
+def get_payment_kb(show_referral_pay: bool = False, tariff_key: str = None) -> InlineKeyboardMarkup:
+    """
+    Клавиатура оплаты.
+    show_referral_pay - показывать кнопку оплаты с реферального баланса
+    tariff_key - ключ тарифа для callback_data
+    """
+    buttons = []
+    if show_referral_pay and tariff_key:
+        buttons.append([InlineKeyboardButton(text="💰 Оплатить с реф. баланса", callback_data=f"pay_referral_{tariff_key}")])
+    buttons.append([InlineKeyboardButton(text="📸 Отправить чек", callback_data="send_receipt")])
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

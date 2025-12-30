@@ -986,52 +986,86 @@ async def tariff_selected(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Неизвестный тариф", show_alert=True)
         return
     
-    tariff = TARIFFS[tariff_key]
+    # Получаем цены из БД
+    prices = await get_prices()
     
-    if tariff["price"] == 0:
+    # Определяем цену и название тарифа
+    if tariff_key == "30":
+        price = prices["price_30"]
+        name = "30 дней"
+        days = 30
+    elif tariff_key == "90":
+        price = prices["price_90"]
+        name = "90 дней"
+        days = 90
+    elif tariff_key == "180":
+        price = prices["price_180"]
+        name = "180 дней"
+        days = 180
+    else:
         await callback.answer("Этот тариф недоступен для покупки", show_alert=True)
         return
     
     # Проверяем скидку 50% для рефералов (первая оплата)
     has_referral_discount = False
-    discounted_price = tariff["price"]
+    discounted_price = price
+    referral_balance = 0
     
     async with async_session() as session:
         stmt = select(User).where(User.telegram_id == callback.from_user.id)
         result = await session.execute(stmt)
         user = result.scalar_one_or_none()
         
-        if user and user.referrer_id and not user.first_payment_done:
-            has_referral_discount = True
-            discounted_price = tariff["price"] // 2  # 50% скидка
+        if user:
+            referral_balance = user.referral_balance or 0
+            if user.referrer_id and not user.first_payment_done:
+                has_referral_discount = True
+                discounted_price = price // 2  # 50% скидка
     
-    await state.update_data(selected_tariff=tariff_key, has_referral_discount=has_referral_discount)
+    # Финальная цена для оплаты
+    final_price = discounted_price if has_referral_discount else price
+    
+    await state.update_data(
+        selected_tariff=tariff_key, 
+        has_referral_discount=has_referral_discount,
+        tariff_price=final_price,
+        tariff_days=days
+    )
     # Сразу устанавливаем состояние ожидания чека — можно отправить фото до нажатия кнопки
     await state.set_state(PaymentStates.waiting_for_receipt)
     
+    # Проверяем, хватает ли реферального баланса
+    can_pay_with_referral = referral_balance >= final_price
+    
     if has_referral_discount:
-        await callback.message.edit_text(
-            f"💳 *Оплата тарифа: {tariff['name']}*\n\n"
+        text = (
+            f"💳 *Оплата тарифа: {name}*\n\n"
             f"🎁 *Скидка 50% по реферальной программе!*\n"
-            f"💰 Сумма: *{discounted_price}₽* (вместо {tariff['price']}₽)\n\n"
+            f"💰 Сумма: *{discounted_price}₽* (вместо {price}₽)\n\n"
             f"📱 Переведите на номер:\n"
             f"`{PAYMENT_PHONE}`\n"
             f"(Сбербанк или Т-Банк)\n\n"
-            f"После оплаты отправьте фото чека.",
-            parse_mode="Markdown",
-            reply_markup=get_payment_kb()
+            f"После оплаты отправьте фото чека."
         )
     else:
-        await callback.message.edit_text(
-            f"💳 *Оплата тарифа: {tariff['name']}*\n\n"
-            f"💰 Сумма: *{tariff['price']}₽*\n\n"
+        text = (
+            f"💳 *Оплата тарифа: {name}*\n\n"
+            f"💰 Сумма: *{price}₽*\n\n"
             f"📱 Переведите на номер:\n"
             f"`{PAYMENT_PHONE}`\n"
             f"(Сбербанк или Т-Банк)\n\n"
-            f"После оплаты отправьте фото чека.",
-            parse_mode="Markdown",
-            reply_markup=get_payment_kb()
+            f"После оплаты отправьте фото чека."
         )
+    
+    # Если баланса не хватает — показываем информацию
+    if referral_balance > 0 and not can_pay_with_referral:
+        text += f"\n\n💡 На реф. балансе: {int(referral_balance)}₽ (недостаточно)"
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=get_payment_kb(show_referral_pay=can_pay_with_referral, tariff_key=tariff_key)
+    )
 
 
 @router.callback_query(F.data == "send_receipt")
@@ -1058,6 +1092,106 @@ async def cancel_payment(callback: CallbackQuery, state: FSMContext):
     )
 
 
+@router.callback_query(F.data.startswith("pay_referral_"))
+async def pay_with_referral_balance(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    """Оплата подписки с реферального баланса"""
+    await callback.answer()
+    
+    tariff_key = callback.data.replace("pay_referral_", "")
+    
+    # Получаем цены из БД
+    prices = await get_prices()
+    
+    # Определяем цену и дни тарифа
+    if tariff_key == "30":
+        price = prices["price_30"]
+        days = 30
+        name = "30 дней"
+    elif tariff_key == "90":
+        price = prices["price_90"]
+        days = 90
+        name = "90 дней"
+    elif tariff_key == "180":
+        price = prices["price_180"]
+        days = 180
+        name = "180 дней"
+    else:
+        await callback.answer("Неизвестный тариф", show_alert=True)
+        return
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.telegram_id == callback.from_user.id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await callback.answer("Ошибка: пользователь не найден", show_alert=True)
+            return
+        
+        # Проверяем скидку для реферала
+        has_referral_discount = user.referrer_id and not user.first_payment_done
+        final_price = price // 2 if has_referral_discount else price
+        
+        # Проверяем баланс
+        if user.referral_balance < final_price:
+            await callback.answer(f"Недостаточно средств. Нужно: {final_price}₽, у вас: {int(user.referral_balance)}₽", show_alert=True)
+            return
+        
+        # Списываем с баланса
+        user.referral_balance -= final_price
+        
+        # Если это первая оплата реферала — отмечаем
+        if has_referral_discount:
+            user.first_payment_done = True
+        
+        # Создаём или продлеваем подписку
+        active_sub = None
+        for sub in user.subscriptions:
+            if sub.expires_at and sub.expires_at > datetime.utcnow():
+                active_sub = sub
+                break
+        
+        if active_sub:
+            # Продлеваем существующую подписку
+            active_sub.expires_at = active_sub.expires_at + timedelta(days=days)
+            active_sub.days_total += days
+        else:
+            # Создаём новую подписку
+            new_sub = Subscription(
+                user_id=user.id,
+                tariff_type=tariff_key,
+                days_total=days,
+                expires_at=datetime.utcnow() + timedelta(days=days)
+            )
+            session.add(new_sub)
+        
+        await session.commit()
+        
+        user_info = f"@{user.username}" if user.username else user.full_name
+    
+    await state.clear()
+    
+    # Уведомляем пользователя
+    await callback.message.edit_text(
+        f"✅ *Подписка оплачена с реферального баланса!*\n\n"
+        f"📅 Тариф: {name}\n"
+        f"💰 Списано: {final_price}₽\n\n"
+        f"Теперь можешь получить конфиг!",
+        parse_mode="Markdown",
+        reply_markup=get_main_menu_kb(callback.from_user.id, True)
+    )
+    
+    # Уведомляем админа
+    await bot.send_message(
+        ADMIN_ID,
+        f"💰 *Оплата с реф. баланса*\n\n"
+        f"👤 {user_info}\n"
+        f"📅 Тариф: {name}\n"
+        f"💵 Сумма: {final_price}₽",
+        parse_mode="Markdown"
+    )
+
+
 @router.message(PaymentStates.waiting_for_receipt, F.photo)
 async def process_receipt(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
@@ -1069,8 +1203,17 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
         await state.clear()
         return
     
-    tariff = TARIFFS[tariff_key]
-    original_price = tariff["price"]
+    # Получаем цены из БД
+    prices = await get_prices()
+    if tariff_key == "30":
+        original_price = prices["price_30"]
+    elif tariff_key == "90":
+        original_price = prices["price_90"]
+    elif tariff_key == "180":
+        original_price = prices["price_180"]
+    else:
+        original_price = TARIFFS[tariff_key]["price"]
+    
     # Если есть скидка 50% — ожидаем половину суммы
     expected_amount = original_price // 2 if has_referral_discount else original_price
     photo = message.photo[-1]
@@ -2156,8 +2299,16 @@ async def referral_withdraw(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Ошибка: пользователь не найден", show_alert=True)
             return
         
-        if user.referral_balance < 1000:
-            await callback.answer(f"❌ Минимальная сумма вывода: 1000₽\nУ тебя: {int(user.referral_balance)}₽", show_alert=True)
+        # Минимальная сумма вывода 500₽
+        if user.referral_balance < 500:
+            await callback.message.edit_text(
+                f"💸 *Вывод средств*\n\n"
+                f"❌ Минимальная сумма вывода: *500₽*\n"
+                f"💰 Твой баланс: *{int(user.referral_balance)}₽*\n\n"
+                f"Накопи ещё {500 - int(user.referral_balance)}₽ и возвращайся!",
+                parse_mode="Markdown",
+                reply_markup=get_referral_back_kb()
+            )
             return
         
         # Сохраняем сумму для вывода
@@ -2174,7 +2325,7 @@ async def referral_withdraw(callback: CallbackQuery, state: FSMContext):
         )
 
 
-@router.message(WithdrawalStates.waiting_for_bank)
+@router.message(WithdrawalStates.waiting_for_bank, F.text)
 async def process_withdrawal_bank(message: Message, state: FSMContext, bot: Bot):
     """Обработка ввода банка"""
     data = await state.get_data()
@@ -2220,7 +2371,7 @@ async def process_withdrawal_bank(message: Message, state: FSMContext, bot: Bot)
     await state.update_data(prompt_msg_id=msg.message_id)
 
 
-@router.message(WithdrawalStates.waiting_for_phone)
+@router.message(WithdrawalStates.waiting_for_phone, F.text)
 async def process_withdrawal_phone(message: Message, state: FSMContext, bot: Bot):
     """Обработка ввода телефона"""
     data = await state.get_data()
