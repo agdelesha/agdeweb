@@ -1203,8 +1203,10 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
         await state.clear()
         return
     
-    # Получаем цены из БД
+    # Получаем цены из БД и данные тарифа
     prices = await get_prices()
+    tariff = TARIFFS[tariff_key]  # Для получения days и name
+    
     if tariff_key == "30":
         original_price = prices["price_30"]
     elif tariff_key == "90":
@@ -1212,7 +1214,7 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
     elif tariff_key == "180":
         original_price = prices["price_180"]
     else:
-        original_price = TARIFFS[tariff_key]["price"]
+        original_price = tariff["price"]
     
     # Если есть скидка 50% — ожидаем половину суммы
     expected_amount = original_price // 2 if has_referral_discount else original_price
