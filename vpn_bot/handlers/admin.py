@@ -2881,21 +2881,19 @@ async def admin_server_confirm_delete(callback: CallbackQuery):
         
         server_name = server.name
         
-        # Отключаем все конфиги этого сервера и обнуляем server_id
+        # Удаляем все конфиги этого сервера (они всё равно бесполезны без сервера)
         configs_result = await session.execute(
             select(Config).where(Config.server_id == server_id)
         )
         configs = configs_result.scalars().all()
-        disabled_count = 0
+        deleted_count = len(configs)
         for config in configs:
-            config.is_active = False
-            config.server_id = None  # Сервер удалён
-            disabled_count += 1
+            await session.delete(config)
         
         await session.delete(server)
         await session.commit()
     
-    await callback.answer(f"✅ Сервер {server_name} удален, {disabled_count} конфигов отключено")
+    await callback.answer(f"✅ Сервер {server_name} удален, {deleted_count} конфигов удалено")
     
     # Возвращаемся к списку серверов
     async with async_session() as session:
