@@ -34,6 +34,11 @@ class AdminStates(StatesGroup):
     waiting_for_bot_password = State()
     waiting_for_bot_channel = State()
     waiting_for_bot_max_configs = State()
+    # Управление ценами
+    waiting_for_price_trial = State()
+    waiting_for_price_30 = State()
+    waiting_for_price_90 = State()
+    waiting_for_price_180 = State()
 
 
 class WithdrawalStates(StatesGroup):

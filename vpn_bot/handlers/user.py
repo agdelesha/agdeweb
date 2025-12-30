@@ -23,7 +23,7 @@ from states.user_states import PaymentStates, RegistrationStates, ConfigRequestS
 from services.wireguard import WireGuardService
 from services.wireguard_multi import WireGuardMultiService
 from services.ocr import OCRService
-from services.settings import is_password_required, is_channel_required, get_bot_password, is_phone_required, is_config_approval_required, get_setting, get_channel_name, get_max_configs
+from services.settings import is_password_required, is_channel_required, get_bot_password, is_phone_required, is_config_approval_required, get_setting, get_channel_name, get_max_configs, get_prices
 from keyboards.admin_kb import get_payment_review_kb, get_config_request_kb, get_check_subscription_kb
 from utils import transliterate_ru_to_en
 
@@ -496,13 +496,14 @@ async def check_subscription_callback(callback: CallbackQuery, state: FSMContext
         await state.clear()
         user = await get_user_by_telegram_id(callback.from_user.id)
         has_referral_discount = user and user.referrer_id and not user.first_payment_done
+        prices = await get_prices()
         await callback.message.edit_text(
             "✅ Подписка подтверждена!\n\n"
             "💳 *Продление подписки*\n\n"
             "Выбери тариф для продления.\n"
             "Дни будут добавлены к текущей подписке.",
             parse_mode="Markdown",
-            reply_markup=get_tariffs_kb(show_trial=False, has_referral_discount=has_referral_discount)
+            reply_markup=get_tariffs_kb(show_trial=False, has_referral_discount=has_referral_discount, prices=prices)
         )
     elif after_subscription == "extra_config":
         await state.clear()
@@ -719,11 +720,12 @@ async def funnel_trial(callback: CallbackQuery):
     user = await get_user_by_telegram_id(callback.from_user.id)
     if user and user.trial_used:
         has_referral_discount = user.referrer_id and not user.first_payment_done
+        prices = await get_prices()
         await callback.message.edit_text(
             "❌ Ты уже использовал пробный период.\n\n"
             "Выбери тариф для продолжения:",
             parse_mode="Markdown",
-            reply_markup=get_tariffs_kb(show_trial=False, has_referral_discount=has_referral_discount)
+            reply_markup=get_tariffs_kb(show_trial=False, has_referral_discount=has_referral_discount, prices=prices)
         )
         return
     
@@ -744,19 +746,20 @@ async def funnel_tariffs(callback: CallbackQuery):
     show_trial = not user.trial_used if user else True
     # Проверяем скидку для реферала
     has_referral_discount = user and user.referrer_id and not user.first_payment_done
+    prices = await get_prices()
     
     try:
         await callback.message.edit_text(
             "📋 *Выбери тарифный план:*",
             parse_mode="Markdown",
-            reply_markup=get_tariffs_kb(show_trial=show_trial, has_referral_discount=has_referral_discount)
+            reply_markup=get_tariffs_kb(show_trial=show_trial, has_referral_discount=has_referral_discount, prices=prices)
         )
     except Exception:
         await callback.message.delete()
         await callback.message.answer(
             "📋 *Выбери тарифный план:*",
             parse_mode="Markdown",
-            reply_markup=get_tariffs_kb(show_trial=show_trial, has_referral_discount=has_referral_discount)
+            reply_markup=get_tariffs_kb(show_trial=show_trial, has_referral_discount=has_referral_discount, prices=prices)
         )
 
 
@@ -840,28 +843,29 @@ async def get_vpn(callback: CallbackQuery):
     user = await get_user_by_telegram_id(callback.from_user.id)
     show_trial = not user.trial_used if user else True
     has_referral_discount = user and user.referrer_id and not user.first_payment_done
+    prices = await get_prices()
     
     if has_referral_discount:
         tariff_text = (
             "📋 *Выбери тарифный план:*\n\n"
-            "🎁 Пробный — 3 дня бесплатно (один раз)\n"
-            "📅 30 дней — *100₽* вместо 200₽ (скидка 50%)\n"
-            "📅 90 дней — *200₽* вместо 400₽ (скидка 50%)\n"
-            "📅 180 дней — *300₽* вместо 600₽ (скидка 50%)"
+            f"🎁 Пробный — {prices['trial_days']} дня бесплатно (один раз)\n"
+            f"📅 30 дней — *{prices['price_30'] // 2}₽* вместо {prices['price_30']}₽ (скидка 50%)\n"
+            f"📅 90 дней — *{prices['price_90'] // 2}₽* вместо {prices['price_90']}₽ (скидка 50%)\n"
+            f"📅 180 дней — *{prices['price_180'] // 2}₽* вместо {prices['price_180']}₽ (скидка 50%)"
         )
     else:
         tariff_text = (
             "📋 *Выбери тарифный план:*\n\n"
-            "🎁 Пробный — 3 дня бесплатно (один раз)\n"
-            "📅 30 дней — 200₽\n"
-            "📅 90 дней — 400₽\n"
-            "📅 180 дней — 600₽"
+            f"🎁 Пробный — {prices['trial_days']} дня бесплатно (один раз)\n"
+            f"📅 30 дней — {prices['price_30']}₽\n"
+            f"📅 90 дней — {prices['price_90']}₽\n"
+            f"📅 180 дней — {prices['price_180']}₽"
         )
     
     await callback.message.edit_text(
         tariff_text,
         parse_mode="Markdown",
-        reply_markup=get_tariffs_kb(show_trial=show_trial, has_referral_discount=has_referral_discount)
+        reply_markup=get_tariffs_kb(show_trial=show_trial, has_referral_discount=has_referral_discount, prices=prices)
     )
 
 
@@ -883,13 +887,14 @@ async def extend_subscription(callback: CallbackQuery, state: FSMContext, bot: B
     
     user = await get_user_by_telegram_id(callback.from_user.id)
     has_referral_discount = user and user.referrer_id and not user.first_payment_done
+    prices = await get_prices()
     
     await callback.message.edit_text(
         "💳 *Продление подписки*\n\n"
         "Выбери тариф для продления.\n"
         "Дни будут добавлены к текущей подписке.",
         parse_mode="Markdown",
-        reply_markup=get_tariffs_kb(show_trial=False, has_referral_discount=has_referral_discount)
+        reply_markup=get_tariffs_kb(show_trial=False, has_referral_discount=has_referral_discount, prices=prices)
     )
 
 
@@ -1911,6 +1916,7 @@ async def handle_ai_action(message: Message, state: FSMContext, bot: Bot, action
     # Получаем пользователя для проверки скидки
     user = await get_user_by_telegram_id(message.from_user.id)
     has_referral_discount = user and user.referrer_id and not user.first_payment_done
+    prices = await get_prices()
     
     if action == "activate_trial":
         if not context.trial_used:
@@ -1920,14 +1926,14 @@ async def handle_ai_action(message: Message, state: FSMContext, bot: Bot, action
             await message.answer("Пробный период уже был использован. Выбери тариф для продолжения:")
             await message.answer(
                 "📋 Выбери тарифный план:",
-                reply_markup=get_tariffs_kb(show_trial=False, has_referral_discount=has_referral_discount)
+                reply_markup=get_tariffs_kb(show_trial=False, has_referral_discount=has_referral_discount, prices=prices)
             )
     
     elif action == "show_tariffs":
         show_trial = not context.trial_used
         await message.answer(
             "📋 Выбери тарифный план:",
-            reply_markup=get_tariffs_kb(show_trial=show_trial, has_referral_discount=has_referral_discount)
+            reply_markup=get_tariffs_kb(show_trial=show_trial, has_referral_discount=has_referral_discount, prices=prices)
         )
     
     elif action == "show_configs":
@@ -1953,7 +1959,7 @@ async def handle_ai_action(message: Message, state: FSMContext, bot: Bot, action
         else:
             await message.answer(
                 "У тебя нет активной подписки. Хочешь оформить?",
-                reply_markup=get_tariffs_kb(show_trial=not context.trial_used, has_referral_discount=has_referral_discount)
+                reply_markup=get_tariffs_kb(show_trial=not context.trial_used, has_referral_discount=has_referral_discount, prices=prices)
             )
     
     elif action == "create_config":
@@ -1971,12 +1977,12 @@ async def handle_ai_action(message: Message, state: FSMContext, bot: Bot, action
         else:
             # Нет подписки — предлагаем trial или тарифы
             if not context.trial_used:
-                await message.answer("Сначала нужна подписка. Хочешь попробовать 3 дня бесплатно?")
+                await message.answer(f"Сначала нужна подписка. Хочешь попробовать {prices['trial_days']} дня бесплатно?")
                 await activate_trial_from_ai(message, bot)
             else:
                 await message.answer(
                     "Для создания конфига нужна активная подписка. Выбери тариф:",
-                    reply_markup=get_tariffs_kb(show_trial=False, has_referral_discount=has_referral_discount)
+                    reply_markup=get_tariffs_kb(show_trial=False, has_referral_discount=has_referral_discount, prices=prices)
                 )
     
     elif action == "show_referral":

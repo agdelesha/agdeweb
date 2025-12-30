@@ -149,3 +149,39 @@ async def delete_bot_instance(bot_id: int) -> bool:
             await session.commit()
             return True
         return False
+
+
+# ===== УПРАВЛЕНИЕ ЦЕНАМИ =====
+
+async def get_prices() -> dict:
+    """Получает все цены из БД"""
+    prices = {
+        "trial_days": 3,
+        "price_30": 200,
+        "price_90": 400,
+        "price_180": 600,
+    }
+    
+    # Загружаем из БД если есть
+    trial = await get_setting("trial_days")
+    if trial:
+        prices["trial_days"] = int(trial)
+    
+    p30 = await get_setting("price_30")
+    if p30:
+        prices["price_30"] = int(p30)
+    
+    p90 = await get_setting("price_90")
+    if p90:
+        prices["price_90"] = int(p90)
+    
+    p180 = await get_setting("price_180")
+    if p180:
+        prices["price_180"] = int(p180)
+    
+    return prices
+
+
+async def set_price(key: str, value: int):
+    """Устанавливает цену"""
+    await set_setting(key, str(value))

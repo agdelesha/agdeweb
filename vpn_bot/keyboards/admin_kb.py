@@ -10,6 +10,8 @@ def get_admin_menu_kb(pending_count: int = 0, pending_withdrawals: int = 0) -> I
         [InlineKeyboardButton(text=f"💸 Заявки на вывод{withdrawal_badge}", callback_data="admin_withdrawals")],
         [InlineKeyboardButton(text="👥 Рефералы", callback_data="admin_referrals")],
         [InlineKeyboardButton(text="🖥 Серверы", callback_data="admin_servers")],
+        [InlineKeyboardButton(text="🤖 Боты", callback_data="settings_bots")],
+        [InlineKeyboardButton(text="💵 Цены", callback_data="admin_prices")],
         [InlineKeyboardButton(text="✉️ Сообщение", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings")],
@@ -144,7 +146,6 @@ def get_config_request_kb(user_id: int) -> InlineKeyboardMarkup:
 
 def get_settings_kb() -> InlineKeyboardMarkup:
     buttons = [
-        [InlineKeyboardButton(text="🤖 Боты", callback_data="settings_bots")],
         [InlineKeyboardButton(text="🔑 Пароль", callback_data="settings_password")],
         [InlineKeyboardButton(text="📢 Подписка на канал", callback_data="settings_channel")],
         [InlineKeyboardButton(text="📱 Запрос телефона", callback_data="settings_phone")],
@@ -551,4 +552,30 @@ def get_bot_delete_confirm_kb(bot_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"bot_delete_confirm_{bot_id}"),
             InlineKeyboardButton(text="❌ Отмена", callback_data=f"bot_settings_{bot_id}")
         ]
+    ])
+
+
+# ===== УПРАВЛЕНИЕ ЦЕНАМИ =====
+
+def get_prices_kb(prices: dict) -> InlineKeyboardMarkup:
+    """Клавиатура управления ценами"""
+    trial_days = prices.get("trial_days", 3)
+    price_30 = prices.get("price_30", 200)
+    price_90 = prices.get("price_90", 400)
+    price_180 = prices.get("price_180", 600)
+    
+    buttons = [
+        [InlineKeyboardButton(text=f"🎁 Пробный: {trial_days} дней", callback_data="price_trial")],
+        [InlineKeyboardButton(text=f"📅 30 дней: {price_30}₽", callback_data="price_30")],
+        [InlineKeyboardButton(text=f"📅 90 дней: {price_90}₽", callback_data="price_90")],
+        [InlineKeyboardButton(text=f"📅 180 дней: {price_180}₽", callback_data="price_180")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_price_edit_cancel_kb() -> InlineKeyboardMarkup:
+    """Клавиатура отмены при редактировании цены"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_prices")]
     ])

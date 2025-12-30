@@ -4132,3 +4132,252 @@ async def process_bot_max_configs(message: Message, state: FSMContext):
         parse_mode="Markdown",
         reply_markup=get_bot_settings_kb(bot_id, bot)
     )
+
+
+# ===== УПРАВЛЕНИЕ ЦЕНАМИ =====
+
+@router.callback_query(F.data == "admin_prices")
+async def admin_prices(callback: CallbackQuery, state: FSMContext):
+    """Меню управления ценами"""
+    await callback.answer()
+    await state.clear()
+    
+    from services.settings import get_prices
+    from keyboards.admin_kb import get_prices_kb
+    
+    prices = await get_prices()
+    
+    await callback.message.edit_text(
+        "💵 *Управление ценами*\n\n"
+        "Нажми на тариф, чтобы изменить цену:",
+        parse_mode="Markdown",
+        reply_markup=get_prices_kb(prices)
+    )
+
+
+@router.callback_query(F.data == "price_trial")
+async def price_trial_edit(callback: CallbackQuery, state: FSMContext):
+    """Редактирование пробного периода"""
+    await callback.answer()
+    
+    from keyboards.admin_kb import get_price_edit_cancel_kb
+    
+    msg = await callback.message.edit_text(
+        "🎁 *Пробный период*\n\n"
+        "Введи количество дней для пробного периода:",
+        parse_mode="Markdown",
+        reply_markup=get_price_edit_cancel_kb()
+    )
+    
+    await state.set_state(AdminStates.waiting_for_price_trial)
+    await state.update_data(prompt_msg_id=msg.message_id)
+
+
+@router.callback_query(F.data == "price_30")
+async def price_30_edit(callback: CallbackQuery, state: FSMContext):
+    """Редактирование цены 30 дней"""
+    await callback.answer()
+    
+    from keyboards.admin_kb import get_price_edit_cancel_kb
+    
+    msg = await callback.message.edit_text(
+        "📅 *Тариф 30 дней*\n\n"
+        "Введи новую цену в рублях:",
+        parse_mode="Markdown",
+        reply_markup=get_price_edit_cancel_kb()
+    )
+    
+    await state.set_state(AdminStates.waiting_for_price_30)
+    await state.update_data(prompt_msg_id=msg.message_id)
+
+
+@router.callback_query(F.data == "price_90")
+async def price_90_edit(callback: CallbackQuery, state: FSMContext):
+    """Редактирование цены 90 дней"""
+    await callback.answer()
+    
+    from keyboards.admin_kb import get_price_edit_cancel_kb
+    
+    msg = await callback.message.edit_text(
+        "📅 *Тариф 90 дней*\n\n"
+        "Введи новую цену в рублях:",
+        parse_mode="Markdown",
+        reply_markup=get_price_edit_cancel_kb()
+    )
+    
+    await state.set_state(AdminStates.waiting_for_price_90)
+    await state.update_data(prompt_msg_id=msg.message_id)
+
+
+@router.callback_query(F.data == "price_180")
+async def price_180_edit(callback: CallbackQuery, state: FSMContext):
+    """Редактирование цены 180 дней"""
+    await callback.answer()
+    
+    from keyboards.admin_kb import get_price_edit_cancel_kb
+    
+    msg = await callback.message.edit_text(
+        "📅 *Тариф 180 дней*\n\n"
+        "Введи новую цену в рублях:",
+        parse_mode="Markdown",
+        reply_markup=get_price_edit_cancel_kb()
+    )
+    
+    await state.set_state(AdminStates.waiting_for_price_180)
+    await state.update_data(prompt_msg_id=msg.message_id)
+
+
+@router.message(AdminStates.waiting_for_price_trial)
+async def process_price_trial(message: Message, state: FSMContext):
+    """Обработка ввода пробного периода"""
+    try:
+        days = int(message.text.strip())
+        if days < 1 or days > 30:
+            raise ValueError()
+    except:
+        await message.answer("❌ Введите число от 1 до 30")
+        return
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    if prompt_msg_id:
+        try:
+            await message.bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    from services.settings import set_price, get_prices
+    from keyboards.admin_kb import get_prices_kb
+    
+    await set_price("trial_days", days)
+    await state.clear()
+    
+    prices = await get_prices()
+    await message.answer(
+        f"✅ Пробный период: {days} дней\n\n"
+        "💵 *Управление ценами*",
+        parse_mode="Markdown",
+        reply_markup=get_prices_kb(prices)
+    )
+
+
+@router.message(AdminStates.waiting_for_price_30)
+async def process_price_30(message: Message, state: FSMContext):
+    """Обработка ввода цены 30 дней"""
+    try:
+        price = int(message.text.strip())
+        if price < 1:
+            raise ValueError()
+    except:
+        await message.answer("❌ Введите число больше 0")
+        return
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    if prompt_msg_id:
+        try:
+            await message.bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    from services.settings import set_price, get_prices
+    from keyboards.admin_kb import get_prices_kb
+    
+    await set_price("price_30", price)
+    await state.clear()
+    
+    prices = await get_prices()
+    await message.answer(
+        f"✅ Цена 30 дней: {price}₽\n\n"
+        "💵 *Управление ценами*",
+        parse_mode="Markdown",
+        reply_markup=get_prices_kb(prices)
+    )
+
+
+@router.message(AdminStates.waiting_for_price_90)
+async def process_price_90(message: Message, state: FSMContext):
+    """Обработка ввода цены 90 дней"""
+    try:
+        price = int(message.text.strip())
+        if price < 1:
+            raise ValueError()
+    except:
+        await message.answer("❌ Введите число больше 0")
+        return
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    if prompt_msg_id:
+        try:
+            await message.bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    from services.settings import set_price, get_prices
+    from keyboards.admin_kb import get_prices_kb
+    
+    await set_price("price_90", price)
+    await state.clear()
+    
+    prices = await get_prices()
+    await message.answer(
+        f"✅ Цена 90 дней: {price}₽\n\n"
+        "💵 *Управление ценами*",
+        parse_mode="Markdown",
+        reply_markup=get_prices_kb(prices)
+    )
+
+
+@router.message(AdminStates.waiting_for_price_180)
+async def process_price_180(message: Message, state: FSMContext):
+    """Обработка ввода цены 180 дней"""
+    try:
+        price = int(message.text.strip())
+        if price < 1:
+            raise ValueError()
+    except:
+        await message.answer("❌ Введите число больше 0")
+        return
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    if prompt_msg_id:
+        try:
+            await message.bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    from services.settings import set_price, get_prices
+    from keyboards.admin_kb import get_prices_kb
+    
+    await set_price("price_180", price)
+    await state.clear()
+    
+    prices = await get_prices()
+    await message.answer(
+        f"✅ Цена 180 дней: {price}₽\n\n"
+        "💵 *Управление ценами*",
+        parse_mode="Markdown",
+        reply_markup=get_prices_kb(prices)
+    )
