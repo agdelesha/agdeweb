@@ -29,19 +29,19 @@ def get_tariffs_kb(show_trial: bool = True, has_referral_discount: bool = False)
     
     if show_trial:
         buttons.append([InlineKeyboardButton(
-            text="7 дней — бесплатно",
+            text="3 дня — бесплатно",
             callback_data="tariff_trial"
         )])
     
     if has_referral_discount:
         # Показываем цены со скидкой 50%
-        buttons.append([InlineKeyboardButton(text="30 дней — 50₽ (скидка 50%)", callback_data="tariff_30")])
-        buttons.append([InlineKeyboardButton(text="90 дней — 100₽ (скидка 50%)", callback_data="tariff_90")])
-        buttons.append([InlineKeyboardButton(text="180 дней — 150₽ (скидка 50%)", callback_data="tariff_180")])
+        buttons.append([InlineKeyboardButton(text="30 дней — 100₽ (скидка 50%)", callback_data="tariff_30")])
+        buttons.append([InlineKeyboardButton(text="90 дней — 200₽ (скидка 50%)", callback_data="tariff_90")])
+        buttons.append([InlineKeyboardButton(text="180 дней — 300₽ (скидка 50%)", callback_data="tariff_180")])
     else:
-        buttons.append([InlineKeyboardButton(text="30 дней — 100₽", callback_data="tariff_30")])
-        buttons.append([InlineKeyboardButton(text="90 дней — 200₽", callback_data="tariff_90")])
-        buttons.append([InlineKeyboardButton(text="180 дней — 300₽", callback_data="tariff_180")])
+        buttons.append([InlineKeyboardButton(text="30 дней — 200₽", callback_data="tariff_30")])
+        buttons.append([InlineKeyboardButton(text="90 дней — 400₽", callback_data="tariff_90")])
+        buttons.append([InlineKeyboardButton(text="180 дней — 600₽", callback_data="tariff_180")])
     
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)

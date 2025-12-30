@@ -782,12 +782,12 @@ async def funnel_get_config(callback: CallbackQuery, bot: Bot):
         if db_user:
             db_user.trial_used = True
             
-            # Создаём подписку на 7 дней
+            # Создаём подписку на 3 дня
             trial_sub = Subscription(
                 user_id=db_user.id,
                 tariff_type="trial",
-                days_total=7,
-                expires_at=datetime.utcnow() + timedelta(days=7)
+                days_total=3,
+                expires_at=datetime.utcnow() + timedelta(days=3)
             )
             session.add(trial_sub)
             await session.commit()
@@ -829,7 +829,7 @@ async def funnel_get_config(callback: CallbackQuery, bot: Bot):
     # Отправляем конфиг
     await send_config_file(
         bot, callback.from_user.id, config_name, config_data, server_id,
-        caption="📄 Вот твой конфиг\n\nЧерез 7 дней пробный период закончится.",
+        caption="📄 Вот твой конфиг\n\nЧерез 3 дня пробный период закончится.",
         reply_markup=get_after_config_kb()
     )
 
@@ -844,18 +844,18 @@ async def get_vpn(callback: CallbackQuery):
     if has_referral_discount:
         tariff_text = (
             "📋 *Выбери тарифный план:*\n\n"
-            "🎁 Пробный — 7 дней бесплатно (один раз)\n"
-            "📅 30 дней — *50₽* вместо 100₽ (скидка 50%)\n"
-            "📅 90 дней — *100₽* вместо 200₽ (скидка 50%)\n"
-            "📅 180 дней — *150₽* вместо 300₽ (скидка 50%)"
+            "🎁 Пробный — 3 дня бесплатно (один раз)\n"
+            "📅 30 дней — *100₽* вместо 200₽ (скидка 50%)\n"
+            "📅 90 дней — *200₽* вместо 400₽ (скидка 50%)\n"
+            "📅 180 дней — *300₽* вместо 600₽ (скидка 50%)"
         )
     else:
         tariff_text = (
             "📋 *Выбери тарифный план:*\n\n"
-            "🎁 Пробный — 7 дней бесплатно (один раз)\n"
-            "📅 30 дней — 100₽\n"
-            "📅 90 дней — 200₽\n"
-            "📅 180 дней — 300₽"
+            "🎁 Пробный — 3 дня бесплатно (один раз)\n"
+            "📅 30 дней — 200₽\n"
+            "📅 90 дней — 400₽\n"
+            "📅 180 дней — 600₽"
         )
     
     await callback.message.edit_text(
@@ -932,11 +932,11 @@ async def tariff_trial(callback: CallbackQuery, bot: Bot):
         )
         session.add(config)
         
-        expires_at = datetime.utcnow() + timedelta(days=7)
+        expires_at = datetime.utcnow() + timedelta(days=3)
         subscription = Subscription(
             user_id=user.id,
             tariff_type="trial",
-            days_total=7,
+            days_total=3,
             expires_at=expires_at,
             is_gift=False
         )
@@ -1971,13 +1971,25 @@ async def handle_ai_action(message: Message, state: FSMContext, bot: Bot, action
         else:
             # Нет подписки — предлагаем trial или тарифы
             if not context.trial_used:
-                await message.answer("Сначала нужна подписка. Хочешь попробовать 7 дней бесплатно?")
+                await message.answer("Сначала нужна подписка. Хочешь попробовать 3 дня бесплатно?")
                 await activate_trial_from_ai(message, bot)
             else:
                 await message.answer(
                     "Для создания конфига нужна активная подписка. Выбери тариф:",
                     reply_markup=get_tariffs_kb(show_trial=False, has_referral_discount=has_referral_discount)
                 )
+    
+    elif action == "show_referral":
+        # Показываем реферальное меню
+        await message.answer(
+            "👥 *Реферальная программа*\n\n"
+            "Приглашай друзей и зарабатывай!\n\n"
+            "🎁 Твой друг получит скидку 50% на первую оплату\n"
+            "💰 Ты получишь % от каждого его платежа\n\n"
+            "Выбери действие:",
+            parse_mode="Markdown",
+            reply_markup=get_referral_menu_kb()
+        )
 
 
 async def activate_trial_from_ai(message: Message, bot: Bot):
@@ -1999,12 +2011,12 @@ async def activate_trial_from_ai(message: Message, bot: Bot):
         
         db_user.trial_used = True
         
-        # Создаём подписку на 7 дней
+        # Создаём подписку на 3 дня
         trial_sub = Subscription(
             user_id=db_user.id,
             tariff_type="trial",
-            days_total=7,
-            expires_at=datetime.utcnow() + timedelta(days=7)
+            days_total=3,
+            expires_at=datetime.utcnow() + timedelta(days=3)
         )
         session.add(trial_sub)
         await session.commit()
@@ -2045,7 +2057,7 @@ async def activate_trial_from_ai(message: Message, bot: Bot):
     # Отправляем конфиг
     await send_config_file(
         bot, message.from_user.id, config_name, config_data, server_id,
-        caption="🎉 Пробный период активирован! Вот твой конфиг на 7 дней.\n\n"
+        caption="🎉 Пробный период активирован! Вот твой конфиг на 3 дня.\n\n"
                 "Скачай WireGuard и импортируй этот файл."
     )
 
