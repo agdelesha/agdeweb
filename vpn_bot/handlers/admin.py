@@ -2424,7 +2424,7 @@ async def admin_servers_list(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data.startswith("admin_server_") & ~F.data.startswith("admin_server_add") & ~F.data.startswith("admin_server_check_") & ~F.data.startswith("admin_server_toggle_") & ~F.data.startswith("admin_server_edit_") & ~F.data.startswith("admin_server_stats_") & ~F.data.startswith("admin_server_delete_") & ~F.data.startswith("admin_server_confirm_delete_") & ~F.data.startswith("admin_server_install_") & ~F.data.startswith("admin_server_clients_") & ~F.data.startswith("admin_server_broadcast_"))
+@router.callback_query(F.data.startswith("admin_server_") & ~F.data.startswith("admin_server_add") & ~F.data.startswith("admin_server_check_") & ~F.data.startswith("admin_server_toggle_") & ~F.data.startswith("admin_server_edit_") & ~F.data.startswith("admin_server_stats_") & ~F.data.startswith("admin_server_delete_") & ~F.data.startswith("admin_server_confirm_delete_") & ~F.data.startswith("admin_server_install_") & ~F.data.startswith("admin_server_clients_") & ~F.data.startswith("admin_server_broadcast_") & ~F.data.startswith("admin_server_migrate_") & ~F.data.startswith("admin_server_cleanup_"))
 async def admin_server_detail(callback: CallbackQuery):
     """Детальная информация о сервере"""
     if not is_admin(callback.from_user.id):
@@ -2859,6 +2859,89 @@ async def admin_server_stats(callback: CallbackQuery):
         parse_mode="Markdown",
         reply_markup=get_server_detail_kb(server_id, server.is_active)
     )
+
+
+@router.callback_query(F.data.startswith("admin_server_cleanup_"))
+async def admin_server_cleanup(callback: CallbackQuery):
+    """Очистка мёртвых пиров (есть на сервере, но нет в БД)"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    server_id = int(callback.data.replace("admin_server_cleanup_", ""))
+    await callback.answer("⏳ Анализирую пиры...")
+    
+    async with async_session() as session:
+        server = await WireGuardMultiService.get_server_by_id(session, server_id)
+        if not server:
+            await callback.message.edit_text("❌ Сервер не найден")
+            return
+        
+        # Получаем пиры с сервера
+        try:
+            success, stdout, stderr = await WireGuardMultiService._ssh_execute(
+                server, f"wg show {server.wg_interface} peers"
+            )
+            if not success:
+                await callback.message.edit_text(
+                    f"❌ Ошибка получения пиров: {stderr}",
+                    reply_markup=get_server_detail_kb(server_id, server.is_active)
+                )
+                return
+            
+            server_peers = set(stdout.strip().split('\n')) if stdout.strip() else set()
+        except Exception as e:
+            await callback.message.edit_text(
+                f"❌ Ошибка подключения: {e}",
+                reply_markup=get_server_detail_kb(server_id, server.is_active)
+            )
+            return
+        
+        # Получаем public_key из БД для этого сервера
+        stmt = select(Config.public_key).where(Config.server_id == server_id)
+        result = await session.execute(stmt)
+        db_keys = set(row[0] for row in result.fetchall() if row[0])
+        
+        # Находим мёртвые пиры (есть на сервере, но нет в БД)
+        dead_peers = server_peers - db_keys
+        dead_peers.discard('')  # Убираем пустые строки
+        
+        if not dead_peers:
+            await callback.message.edit_text(
+                f"✅ На сервере *{server.name}* нет мёртвых пиров.\n\n"
+                f"Пиров на сервере: {len(server_peers)}\n"
+                f"Конфигов в БД: {len(db_keys)}",
+                parse_mode="Markdown",
+                reply_markup=get_server_detail_kb(server_id, server.is_active)
+            )
+            return
+        
+        # Удаляем мёртвые пиры
+        removed = 0
+        for peer_key in dead_peers:
+            try:
+                await WireGuardMultiService._ssh_execute(
+                    server, f"wg set {server.wg_interface} peer {peer_key} remove"
+                )
+                removed += 1
+            except Exception as e:
+                logger.error(f"Ошибка удаления пира {peer_key}: {e}")
+        
+        # Сохраняем конфиг
+        await WireGuardMultiService._ssh_execute(
+            server, f"wg-quick save {server.wg_interface}"
+        )
+        
+        await callback.message.edit_text(
+            f"🧹 *Очистка завершена*\n\n"
+            f"Сервер: *{server.name}*\n"
+            f"Удалено мёртвых пиров: *{removed}*\n\n"
+            f"Было пиров: {len(server_peers)}\n"
+            f"Конфигов в БД: {len(db_keys)}\n"
+            f"Теперь пиров: {len(server_peers) - removed}",
+            parse_mode="Markdown",
+            reply_markup=get_server_detail_kb(server_id, server.is_active)
+        )
 
 
 @router.callback_query(F.data.startswith("admin_server_install_"))
