@@ -23,6 +23,7 @@ from database import init_db, async_session, BotInstance
 from database.models import BotInstance
 from handlers import user_router, admin_router
 from services.scheduler import SchedulerService
+from services.uptime_monitor import init_monitor
 from sqlalchemy import select
 
 logging.basicConfig(
@@ -175,6 +176,10 @@ async def main():
     scheduler = SchedulerService(bot)
     scheduler.start()
     
+    # Мониторинг uptime
+    uptime_monitor = init_monitor(bot)
+    uptime_monitor.start()
+    
     logger.info(f"Запуск бота... (ботов: {len(bots)})")
     
     # Бесконечный цикл с перезапуском при критических ошибках
@@ -187,6 +192,7 @@ async def main():
             await asyncio.sleep(10)
     
     scheduler.stop()
+    uptime_monitor.stop()
     for b in bots:
         await b.session.close()
 

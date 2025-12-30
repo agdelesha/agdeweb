@@ -58,6 +58,27 @@ async def create_config_multi_admin(config_name: str) -> tuple:
         return False, None, None, msg
 
 
+@router.message(Command("uptime"))
+async def cmd_uptime(message: Message):
+    """Показывает статус серверов"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    from services.uptime_monitor import get_monitor
+    monitor = get_monitor()
+    
+    if not monitor:
+        await message.answer("❌ Мониторинг не инициализирован")
+        return
+    
+    # Принудительно проверяем все серверы
+    await message.answer("⏳ Проверяю серверы...")
+    await monitor.check_all_servers()
+    
+    report = monitor.get_status_report()
+    await message.answer(report, parse_mode="Markdown")
+
+
 @router.message(Command("admin"))
 async def cmd_admin(message: Message):
     if not is_admin(message.from_user.id):
