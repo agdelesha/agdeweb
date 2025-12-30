@@ -233,6 +233,18 @@ class WireGuardMultiService:
         ), f"Конфиг создан на сервере {server.name}"
     
     @classmethod
+    async def fetch_config_content(cls, config_name: str, server: Server) -> Optional[str]:
+        """Получить содержимое конфига с удалённого сервера"""
+        if LOCAL_MODE:
+            return None
+        
+        config_path = f"{server.client_dir}/{config_name}.conf"
+        content = await cls._ssh_read_file(server, config_path)
+        if content:
+            return content.decode('utf-8')
+        return None
+    
+    @classmethod
     def _parse_peer_from_wg_conf(cls, wg_content: str, username: str) -> Optional[Dict[str, str]]:
         """Парсинг данных пира из wg0.conf"""
         try:

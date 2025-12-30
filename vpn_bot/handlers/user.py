@@ -693,14 +693,37 @@ async def how_to_understood(callback: CallbackQuery, bot: Bot):
         if user and user.configs and not LOCAL_MODE:
             # Берём последний конфиг (самый новый)
             config = user.configs[-1]
-            config_path = WireGuardService.get_config_file_path(config.name)
-            if os.path.exists(config_path):
-                await bot.send_document(
-                    callback.from_user.id,
-                    FSInputFile(config_path),
-                    caption="📄 Вот твой конфиг",
-                    parse_mode=None
-                )
+            
+            if config.server_id:
+                # Мультисервер - получаем конфиг с удалённого сервера
+                async with async_session() as session:
+                    server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+                    if server:
+                        config_content = await WireGuardMultiService.fetch_config_content(config.name, server)
+                        if config_content:
+                            import tempfile
+                            with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as f:
+                                f.write(config_content)
+                                temp_path = f.name
+                            try:
+                                await bot.send_document(
+                                    callback.from_user.id,
+                                    FSInputFile(temp_path, filename=f"{config.name}.conf"),
+                                    caption="📄 Вот твой конфиг",
+                                    parse_mode=None
+                                )
+                            finally:
+                                os.unlink(temp_path)
+            else:
+                # Локальный сервер
+                config_path = WireGuardService.get_config_file_path(config.name)
+                if os.path.exists(config_path):
+                    await bot.send_document(
+                        callback.from_user.id,
+                        FSInputFile(config_path),
+                        caption="📄 Вот твой конфиг",
+                        parse_mode=None
+                    )
         
         # Отправляем главное меню
         menu_text = (
