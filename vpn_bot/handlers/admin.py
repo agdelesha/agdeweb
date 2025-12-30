@@ -29,7 +29,7 @@ from services.wireguard import WireGuardService
 from services.wireguard_multi import WireGuardMultiService
 from services.settings import get_setting, set_setting
 from states.user_states import AdminStates
-from utils import transliterate_ru_to_en
+from utils import transliterate_ru_to_en, format_datetime_moscow, format_date_moscow
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -205,7 +205,7 @@ async def admin_user_detail(callback: CallbackQuery, state: FSMContext):
         f"🆔 Telegram ID: {user.telegram_id}\n"
         f"👤 Username: {username}\n"
         f"📝 Имя: {user.full_name}\n"
-        f"📅 Регистрация: {user.created_at.strftime('%d.%m.%Y')}\n"
+        f"📅 Регистрация: {format_date_moscow(user.created_at)}\n"
         f"🎁 Пробный: {'Использован' if user.trial_used else 'Доступен'}\n\n"
         f"📋 Подписка: {sub_status}\n"
         f"📱 Конфигов: {len(user.configs)}{max_configs_text}\n"
@@ -276,7 +276,7 @@ async def admin_config_detail(callback: CallbackQuery):
         f"📱 *Конфиг: {config.name}*\n\n"
         f"Статус: {status}\n"
         f"IP: `{config.client_ip}`\n"
-        f"Создан: {config.created_at.strftime('%d.%m.%Y')}"
+        f"Создан: {format_date_moscow(config.created_at)}"
         f"{traffic_info}",
         parse_mode="Markdown",
         reply_markup=get_admin_config_kb(config.id, config.user_id, config.is_active)
@@ -325,7 +325,7 @@ async def admin_toggle_config(callback: CallbackQuery):
             f"📱 *Конфиг: {config.name}*\n\n"
             f"Статус: {status}\n"
             f"IP: `{config.client_ip}`\n"
-            f"Создан: {config.created_at.strftime('%d.%m.%Y')}",
+            f"Создан: {format_date_moscow(config.created_at)}",
             parse_mode="Markdown",
             reply_markup=get_admin_config_kb(config.id, config.user_id, config.is_active)
         )
@@ -399,7 +399,7 @@ async def admin_user_payments(callback: CallbackQuery):
     for p in sorted(user.payments, key=lambda x: x.created_at, reverse=True)[:10]:
         status_emoji = {"pending": "⏳", "approved": "✅", "rejected": "❌"}.get(p.status, "❓")
         tariff_name = TARIFFS.get(p.tariff_type, {}).get("name", p.tariff_type)
-        payments_text += f"\n{status_emoji} {p.created_at.strftime('%d.%m')} — {tariff_name} ({p.amount}₽)"
+        payments_text += f"\n{status_emoji} {format_datetime_moscow(p.created_at, '%d.%m')} — {tariff_name} ({p.amount}₽)"
     
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -539,6 +539,30 @@ async def admin_pending_payments(callback: CallbackQuery, bot: Bot):
     )
 
 
+@router.callback_query(F.data == "admin_clear_pending_payments")
+async def admin_clear_pending_payments(callback: CallbackQuery, bot: Bot):
+    """Удаление всех ожидающих платежей"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    async with async_session() as session:
+        stmt = select(Payment).where(Payment.status == "pending")
+        result = await session.execute(stmt)
+        payments = result.scalars().all()
+        
+        count = len(payments)
+        for payment in payments:
+            await session.delete(payment)
+        await session.commit()
+    
+    await callback.answer(f"🗑 Удалено {count} платежей")
+    
+    await callback.message.edit_text(
+        "✅ Все ожидающие платежи удалены",
+        reply_markup=get_admin_menu_kb()
+    )
+
+
 @router.callback_query(F.data.startswith("admin_payment_"))
 async def admin_payment_detail(callback: CallbackQuery, bot: Bot):
     if not is_admin(callback.from_user.id):
@@ -572,7 +596,7 @@ async def admin_payment_detail(callback: CallbackQuery, bot: Bot):
             f"🆔 ID: `{user.telegram_id}`\n"
             f"📋 Тариф: {tariff.get('name', payment.tariff_type)}\n"
             f"💵 Сумма: {payment.amount}₽\n"
-            f"📅 Дата: {payment.created_at.strftime('%d.%m.%Y %H:%M')}"
+            f"📅 Дата: {format_datetime_moscow(payment.created_at)}"
             f"{ocr_text}"
         ),
         parse_mode="Markdown",
@@ -769,7 +793,7 @@ async def admin_approve_payment(callback: CallbackQuery, bot: Bot):
         msg_text = (
             f"✅ *Оплата подтверждена!*\n\n"
             f"📋 Тариф: {tariff.get('name', tariff_type)}\n"
-            f"📅 Действует до: {new_expires.strftime('%d.%m.%Y')}\n"
+            f"📅 Действует до: {format_date_moscow(new_expires)}\n"
         )
         
         if config_created:
@@ -858,6 +882,56 @@ async def admin_reject_payment(callback: CallbackQuery, bot: Bot):
             logger.error(f"Ошибка отправки уведомления: {e}")
 
 
+@router.callback_query(F.data.startswith("admin_delete_payment_"))
+async def admin_delete_payment(callback: CallbackQuery, bot: Bot):
+    """Удаление платежа из БД"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    payment_id = int(callback.data.replace("admin_delete_payment_", ""))
+    
+    async with async_session() as session:
+        stmt = select(Payment).where(Payment.id == payment_id)
+        result = await session.execute(stmt)
+        payment = result.scalar_one_or_none()
+        
+        if not payment:
+            await callback.answer("Платёж не найден", show_alert=True)
+            return
+        
+        await session.delete(payment)
+        await session.commit()
+    
+    await callback.answer("🗑 Платёж удалён")
+    
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    
+    # Возвращаемся к списку платежей
+    async with async_session() as session:
+        stmt = select(Payment).where(Payment.status == "pending").options(
+            selectinload(Payment.user)
+        ).order_by(Payment.created_at.desc())
+        result = await session.execute(stmt)
+        payments = result.scalars().all()
+    
+    if not payments:
+        await bot.send_message(
+            callback.from_user.id,
+            "✅ Нет платежей, ожидающих проверки",
+            reply_markup=get_admin_menu_kb()
+        )
+    else:
+        await bot.send_message(
+            callback.from_user.id,
+            f"💰 *Ожидают проверки ({len(payments)}):*",
+            parse_mode="Markdown",
+            reply_markup=get_pending_payments_kb(payments)
+        )
+
+
 @router.callback_query(F.data.startswith("admin_gift_menu_"))
 async def admin_gift_menu(callback: CallbackQuery):
     """Показывает меню выбора срока подарочной подписки"""
@@ -933,7 +1007,7 @@ async def admin_gift_subscription(callback: CallbackQuery, bot: Bot):
                 expires_at=expires_at,
                 is_gift=True
             )
-            user_msg += f"\n\n📅 Действует до: {expires_at.strftime('%d.%m.%Y')}"
+            user_msg += f"\n\n📅 Действует до: {format_date_moscow(expires_at)}"
         else:
             subscription = Subscription(
                 user_id=user.id,
@@ -2360,7 +2434,7 @@ async def admin_server_detail(callback: CallbackQuery):
         f"*Клиентов:* {client_count}/{server.max_clients}\n"
         f"*Приоритет:* {server.priority}\n"
         f"*Интерфейс:* {server.wg_interface}\n"
-        f"*Создан:* {server.created_at.strftime('%d.%m.%Y')}"
+        f"*Создан:* {format_date_moscow(server.created_at)}"
     )
     
     await callback.message.edit_text(
@@ -3276,7 +3350,7 @@ async def admin_server_user_detail(callback: CallbackQuery):
             f"{phone_info}\n"
             f"📱 Конфигов: {configs_count}\n"
             f"📊 Осталось: {days_info}\n"
-            f"📅 Регистрация: {user.created_at.strftime('%d.%m.%Y')}"
+            f"📅 Регистрация: {format_date_moscow(user.created_at)}"
         )
         
         await callback.message.edit_text(
@@ -3532,7 +3606,7 @@ async def admin_withdrawal_detail(callback: CallbackQuery):
             f"💰 Сумма: {int(withdrawal.amount)}₽\n"
             f"🏦 Банк: {withdrawal.bank}\n"
             f"📱 Телефон: `{withdrawal.phone}`\n"
-            f"📅 Дата: {withdrawal.created_at.strftime('%d.%m.%Y %H:%M')}",
+            f"📅 Дата: {format_datetime_moscow(withdrawal.created_at)}",
             parse_mode="Markdown",
             reply_markup=get_withdrawal_review_kb(withdrawal_id)
         )

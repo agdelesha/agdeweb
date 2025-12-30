@@ -1,7 +1,34 @@
 """Общие утилиты для бота"""
 
+from datetime import datetime, timedelta, timezone
 from database import async_session, BotInstance
 from sqlalchemy import select
+
+# Московское время UTC+3
+MOSCOW_TZ = timezone(timedelta(hours=3))
+
+
+def to_moscow_time(dt: datetime) -> datetime:
+    """Конвертирует UTC datetime в московское время (UTC+3)"""
+    if dt is None:
+        return None
+    # Если datetime без timezone - считаем что это UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(MOSCOW_TZ)
+
+
+def format_datetime_moscow(dt: datetime, fmt: str = '%d.%m.%Y %H:%M') -> str:
+    """Форматирует datetime в московском времени"""
+    if dt is None:
+        return "—"
+    moscow_dt = to_moscow_time(dt)
+    return moscow_dt.strftime(fmt)
+
+
+def format_date_moscow(dt: datetime) -> str:
+    """Форматирует только дату в московском времени"""
+    return format_datetime_moscow(dt, '%d.%m.%Y')
 
 
 async def get_bot_settings(bot_id: int) -> dict:

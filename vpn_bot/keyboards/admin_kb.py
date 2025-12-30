@@ -84,6 +84,7 @@ def get_payment_review_kb(payment_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"admin_approve_{payment_id}"),
             InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_reject_{payment_id}"),
         ],
+        [InlineKeyboardButton(text="🗑 Удалить платёж", callback_data=f"admin_delete_payment_{payment_id}")],
         [InlineKeyboardButton(text="◀️ К списку", callback_data="admin_pending_payments")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -98,6 +99,8 @@ def get_pending_payments_kb(payments: list) -> InlineKeyboardMarkup:
             text=f"💳 {name} — {payment.amount}₽",
             callback_data=f"admin_payment_{payment.id}"
         )])
+    if payments:
+        buttons.append([InlineKeyboardButton(text="🗑 Очистить все", callback_data="admin_clear_pending_payments")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

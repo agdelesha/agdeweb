@@ -25,7 +25,7 @@ from services.wireguard_multi import WireGuardMultiService
 from services.ocr import OCRService
 from services.settings import is_password_required, is_channel_required, get_bot_password, is_phone_required, is_config_approval_required, get_setting, get_channel_name, get_max_configs, get_prices
 from keyboards.admin_kb import get_payment_review_kb, get_config_request_kb, get_check_subscription_kb
-from utils import transliterate_ru_to_en
+from utils import transliterate_ru_to_en, format_datetime_moscow, format_date_moscow
 
 CHANNEL_USERNAME = "agdevpn"
 
@@ -952,7 +952,7 @@ async def tariff_trial(callback: CallbackQuery, bot: Bot):
         
         await callback.message.edit_text(
             "✅ *Пробный период активирован!*\n\n"
-            f"📅 Действует до: {expires_at.strftime('%d.%m.%Y')}\n\n"
+            f"📅 Действует до: {format_date_moscow(expires_at)}\n\n"
             "Сейчас отправлю тебе конфиг.",
             parse_mode="Markdown"
         )
@@ -1229,7 +1229,7 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
     try:
         file = await bot.get_file(photo.file_id)
         file_bytes = await bot.download_file(file.file_path)
-        ocr_result = await OCRService.extract_amount(file_bytes.read())
+        ocr_result = await OCRService.extract_amount(file_bytes.read(), expected_amount)
         ocr_text = OCRService.format_ocr_result(ocr_result)
         
         if ocr_result and ocr_result.get("most_likely_amount") == expected_amount:
@@ -1383,7 +1383,7 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
         await message.answer(
             f"✅ *Оплата подтверждена автоматически!*\n\n"
             f"📋 Тариф: {tariff['name']}\n"
-            f"📅 Действует до: {new_expires.strftime('%d.%m.%Y')}\n",
+            f"📅 Действует до: {format_date_moscow(new_expires)}\n",
             parse_mode="Markdown"
         )
         
@@ -1612,7 +1612,7 @@ async def config_detail(callback: CallbackQuery):
             f"Статус: {status}\n"
             f"🌍 Сервер: {server_name}\n"
             f"IP: `{config.client_ip}`\n"
-            f"Создан: {config.created_at.strftime('%d.%m.%Y')}"
+            f"Создан: {format_date_moscow(config.created_at)}"
             f"{traffic_text}"
             f"{server_warning}",
             parse_mode="Markdown",
@@ -1790,7 +1790,7 @@ async def my_subscription(callback: CallbackQuery):
         else:
             days_left = (active_sub.expires_at - datetime.utcnow()).days
             status_text = f"✅ *Подписка активна*"
-            expires_text = f"{active_sub.expires_at.strftime('%d.%m.%Y')} ({days_left} дн.)"
+            expires_text = f"{format_date_moscow(active_sub.expires_at)} ({days_left} дн.)"
         
         gift_text = " 🎁" if active_sub.is_gift else ""
         

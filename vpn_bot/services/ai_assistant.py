@@ -6,6 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from config import DEEPSEEK_API_KEY
+from services.settings import get_prices
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class AIResponse:
     action: Optional[str] = None  # "activate_trial", "show_tariffs", "show_configs", "show_subscription"
 
 
-SYSTEM_PROMPT = """Ты — AI-помощник сетевого сервиса, встроенный в Telegram-бота.
+SYSTEM_PROMPT_TEMPLATE = """Ты — AI-помощник сетевого сервиса, встроенный в Telegram-бота.
 
 ## ЗАПРЕЩЕНО:
 - Слова: VPN, обход блокировок, анонимность, запрещённые сайты
@@ -54,19 +55,17 @@ SYSTEM_PROMPT = """Ты — AI-помощник сетевого сервиса,
 Включает: персональные параметры подключения, инструкции, техподдержку.
 
 ## ТАРИФЫ
-- Пробный период: 3 дня бесплатно (один раз)
-- 30 дней: 200₽
-- 90 дней: 400₽
-- 180 дней: 600₽
+{tariffs_info}
 
 ## РЕФЕРАЛЬНАЯ ПРОГРАММА
 Пользователи могут приглашать друзей и зарабатывать:
 - Приглашённый получает скидку 50% на первую оплату
-- Пригласивший получает % от каждого платежа друга
-- Накопленные средства можно вывести через бота
+- Пригласивший получает 10% от каждого платежа друга на свой баланс
+- Накопленными средствами можно ОПЛАТИТЬ ПОДПИСКУ (это важно!)
+- Также можно вывести средства на карту
 - Реферальную ссылку можно получить в меню "Реферальная программа"
 
-Если спрашивают про рефералку — объясни как работает и предложи получить ссылку.
+Если спрашивают про рефералку — объясни как работает, что можно оплатить подписку накопленными средствами, и предложи получить ссылку.
 
 ## КАК ПОДКЛЮЧИТЬСЯ
 1. Скачай WireGuard (App Store / Google Play / wireguard.com)
@@ -106,9 +105,32 @@ SYSTEM_PROMPT = """Ты — AI-помощник сетевого сервиса,
 - "хочу купить" / "продлить" / "тарифы" → [ACTION:SHOW_TARIFFS]
 - "покажи конфиги" / "qr код" → [ACTION:SHOW_CONFIGS]
 - "сколько осталось" / "подписка" → [ACTION:SHOW_SUBSCRIPTION]
-- "реферальная программа" / "пригласить друга" / "заработать" → [ACTION:SHOW_REFERRAL]
+- "реферальная программа" / "пригласить друга" / "заработать" / "оплатить баллами" → [ACTION:SHOW_REFERRAL]
 
 Если не знаешь ответ — направь к @agdelesha."""
+
+
+async def get_system_prompt() -> str:
+    """Получает системный промпт с актуальными ценами из БД"""
+    try:
+        prices = await get_prices()
+        tariffs_info = (
+            f"- Пробный период: {prices.get('trial_days', 3)} дня бесплатно (один раз)\n"
+            f"- 30 дней: {prices.get('price_30', 200)}₽\n"
+            f"- 90 дней: {prices.get('price_90', 400)}₽\n"
+            f"- 180 дней: {prices.get('price_180', 600)}₽"
+        )
+        return SYSTEM_PROMPT_TEMPLATE.format(tariffs_info=tariffs_info)
+    except Exception as e:
+        logger.error(f"Ошибка получения цен для AI: {e}")
+        # Fallback с дефолтными ценами
+        tariffs_info = (
+            "- Пробный период: 3 дня бесплатно (один раз)\n"
+            "- 30 дней: 200₽\n"
+            "- 90 дней: 400₽\n"
+            "- 180 дней: 600₽"
+        )
+        return SYSTEM_PROMPT_TEMPLATE.format(tariffs_info=tariffs_info)
 
 
 def get_user_history(user_id: int) -> List[dict]:
@@ -187,8 +209,8 @@ async def get_ai_response(user_message: str, user_id: int = 0, context: Optional
             "Content-Type": "application/json"
         }
         
-        # Формируем системный промпт с контекстом пользователя
-        full_system_prompt = SYSTEM_PROMPT
+        # Формируем системный промпт с актуальными ценами и контекстом пользователя
+        full_system_prompt = await get_system_prompt()
         if context:
             full_system_prompt += build_context_prompt(context)
         
