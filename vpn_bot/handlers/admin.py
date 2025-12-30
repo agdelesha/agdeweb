@@ -3705,13 +3705,13 @@ async def admin_migrate_confirm(callback: CallbackQuery, bot: Bot):
                             parse_mode="Markdown"
                         )
                         
-                        # Отправляем новый конфиг с клавиатурой "а как"
+                        # Отправляем новый конфиг с обычной клавиатурой клиента
                         from handlers.user import send_config_file
-                        from keyboards.user_kb import get_after_config_kb
+                        from keyboards.user_kb import get_main_menu_kb
                         await send_config_file(
                             bot, user.telegram_id, config_name, new_config_data, target_id,
                             caption="📄 Твой новый WireGuard конфиг",
-                            reply_markup=get_after_config_kb()
+                            reply_markup=get_main_menu_kb(user.telegram_id, True, True)
                         )
                         notified += 1
                     except Exception as e:
