@@ -90,7 +90,8 @@ class ConfigQueueService:
         Обработать очередь - создать конфиги для ожидающих если есть свободные места
         Возвращает (успешно_обработано, ошибок)
         """
-        from services.wireguard_multi import WireGuardMultiService, send_config_file
+        from services.wireguard_multi import WireGuardMultiService
+        from handlers.user import send_config_file
         
         processed = 0
         errors = 0
@@ -146,6 +147,7 @@ class ConfigQueueService:
                         user = item.user
                         if user and user.telegram_id:
                             try:
+                                from keyboards.user_kb import get_main_menu_kb
                                 await bot.send_message(
                                     user.telegram_id,
                                     f"🎉 *Отличные новости!*\n\n"
@@ -156,7 +158,8 @@ class ConfigQueueService:
                                 await send_config_file(
                                     bot, user.telegram_id, item.config_name, 
                                     config_data, config_data.server_id,
-                                    caption="📄 Твой WireGuard конфиг"
+                                    caption="📄 Твой WireGuard конфиг",
+                                    reply_markup=get_main_menu_kb(user.telegram_id, True, True)
                                 )
                                 processed += 1
                                 logger.info(f"Конфиг из очереди выдан пользователю {user.telegram_id}")
