@@ -2000,6 +2000,134 @@ async def cancel_device_input(callback: CallbackQuery, state: FSMContext):
     )
 
 
+# ===== ВЫВОД СРЕДСТВ (должны быть ДО общего @router.message(F.text)) =====
+
+@router.message(WithdrawalStates.waiting_for_bank, F.text)
+async def process_withdrawal_bank(message: Message, state: FSMContext, bot: Bot):
+    """Обработка ввода банка"""
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    
+    bank = message.text.strip()
+    if len(bank) < 2 or len(bank) > 100:
+        await message.answer(
+            "❌ Введи корректное название банка",
+            reply_markup=get_withdrawal_cancel_kb()
+        )
+        return
+    
+    # Удаляем предыдущее сообщение
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    await state.update_data(bank=bank)
+    
+    # Всегда запрашиваем телефон для вывода (независимо от настроек бота)
+    await state.set_state(WithdrawalStates.waiting_for_phone)
+    msg = await message.answer(
+        f"📱 *Введи номер телефона для перевода:*\n\n"
+        f"Банк: {bank}",
+        parse_mode="Markdown",
+        reply_markup=get_withdrawal_cancel_kb()
+    )
+    await state.update_data(prompt_msg_id=msg.message_id)
+
+
+@router.message(WithdrawalStates.waiting_for_phone, F.text)
+async def process_withdrawal_phone(message: Message, state: FSMContext, bot: Bot):
+    """Обработка ввода телефона"""
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    
+    phone = message.text.strip()
+    # Простая валидация телефона
+    phone_clean = re.sub(r'[^\d+]', '', phone)
+    if len(phone_clean) < 10:
+        await message.answer(
+            "❌ Введи корректный номер телефона",
+            reply_markup=get_withdrawal_cancel_kb()
+        )
+        return
+    
+    # Удаляем предыдущее сообщение
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    await state.update_data(phone=phone_clean)
+    
+    # Завершаем создание заявки
+    from keyboards.admin_kb import get_withdrawal_review_kb
+    
+    amount = data.get("withdrawal_amount")
+    bank = data.get("bank")
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.telegram_id == message.from_user.id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await state.clear()
+            await message.answer("❌ Ошибка: пользователь не найден")
+            return
+        
+        if user.referral_balance < amount:
+            await state.clear()
+            await message.answer("❌ Недостаточно средств на балансе")
+            return
+        
+        # Создаём заявку на вывод
+        withdrawal = WithdrawalRequest(
+            user_id=user.id,
+            amount=amount,
+            bank=bank,
+            phone=phone_clean,
+            status="pending"
+        )
+        session.add(withdrawal)
+        
+        # Списываем средства с баланса
+        user.referral_balance -= amount
+        
+        await session.commit()
+        await session.refresh(withdrawal)
+        
+        withdrawal_id = withdrawal.id
+        user_info = f"@{user.username}" if user.username else user.full_name
+    
+    await state.clear()
+    
+    # Уведомляем пользователя
+    await message.answer(
+        f"✅ *Заявка на вывод создана!*\n\n"
+        f"💰 Сумма: {int(amount)}₽\n"
+        f"🏦 Банк: {bank}\n"
+        f"📱 Телефон: {phone_clean}\n\n"
+        f"⏳ Ожидай перевода. Обычно это занимает до 24 часов.",
+        parse_mode="Markdown",
+        reply_markup=get_referral_back_kb()
+    )
+    
+    # Уведомляем админа
+    await bot.send_message(
+        ADMIN_ID,
+        f"💸 *Новая заявка на вывод #{withdrawal_id}*\n\n"
+        f"👤 Пользователь: {user_info}\n"
+        f"🆔 ID: `{message.from_user.id}`\n"
+        f"💰 Сумма: {int(amount)}₽\n"
+        f"🏦 Банк: {bank}\n"
+        f"📱 Телефон: `{phone_clean}`",
+        parse_mode="Markdown",
+        reply_markup=get_withdrawal_review_kb(withdrawal_id)
+    )
+
+
 @router.message(F.text)
 async def handle_text_message(message: Message, state: FSMContext, bot: Bot):
     """Обработчик текстовых сообщений для AI ассистента"""
@@ -2243,7 +2371,7 @@ async def referral_menu(callback: CallbackQuery, state: FSMContext):
         balance = user.referral_balance
         percent = user.referral_percent
         
-        has_balance = balance >= 1000
+        has_balance = balance >= 500  # Минимум для вывода 500₽
         
         await callback.message.edit_text(
             f"👥 *Реферальная программа*\n\n"
@@ -2253,7 +2381,9 @@ async def referral_menu(callback: CallbackQuery, state: FSMContext):
             f"├ Твой %: {int(percent)}%\n"
             f"└ Накоплено: {int(balance)}₽\n\n"
             f"💡 Приглашай друзей и получай {int(percent)}% от их оплат!\n"
-            f"🎁 Твои рефералы получают скидку 50% на первую оплату!",
+            f"🎁 Твои рефералы получают скидку 50% на первую оплату!\n\n"
+            f"💸 Вывод средств от *500₽*\n"
+            f"💳 Можно оплатить подписку бонусами!",
             parse_mode="Markdown",
             reply_markup=get_referral_menu_kb(has_balance=has_balance)
         )
@@ -2323,146 +2453,3 @@ async def referral_withdraw(callback: CallbackQuery, state: FSMContext):
             parse_mode="Markdown",
             reply_markup=get_withdrawal_cancel_kb()
         )
-
-
-@router.message(WithdrawalStates.waiting_for_bank, F.text)
-async def process_withdrawal_bank(message: Message, state: FSMContext, bot: Bot):
-    """Обработка ввода банка"""
-    data = await state.get_data()
-    prompt_msg_id = data.get("prompt_msg_id")
-    
-    bank = message.text.strip()
-    if len(bank) < 2 or len(bank) > 100:
-        await message.answer(
-            "❌ Введи корректное название банка",
-            reply_markup=get_withdrawal_cancel_kb()
-        )
-        return
-    
-    # Удаляем предыдущее сообщение
-    if prompt_msg_id:
-        try:
-            await bot.delete_message(message.chat.id, prompt_msg_id)
-        except:
-            pass
-    
-    await state.update_data(bank=bank)
-    
-    # Проверяем, есть ли у пользователя телефон
-    async with async_session() as session:
-        stmt = select(User).where(User.telegram_id == message.from_user.id)
-        result = await session.execute(stmt)
-        user = result.scalar_one_or_none()
-        
-        if user and user.phone and user.phone != "5553535":
-            # Телефон уже есть — используем его
-            await state.update_data(phone=user.phone)
-            await process_withdrawal_complete(message, state, bot)
-            return
-    
-    # Запрашиваем телефон
-    await state.set_state(WithdrawalStates.waiting_for_phone)
-    msg = await message.answer(
-        f"📱 *Введи номер телефона для перевода:*\n\n"
-        f"Банк: {bank}",
-        parse_mode="Markdown",
-        reply_markup=get_withdrawal_cancel_kb()
-    )
-    await state.update_data(prompt_msg_id=msg.message_id)
-
-
-@router.message(WithdrawalStates.waiting_for_phone, F.text)
-async def process_withdrawal_phone(message: Message, state: FSMContext, bot: Bot):
-    """Обработка ввода телефона"""
-    data = await state.get_data()
-    prompt_msg_id = data.get("prompt_msg_id")
-    
-    phone = message.text.strip()
-    # Простая валидация телефона
-    phone_clean = re.sub(r'[^\d+]', '', phone)
-    if len(phone_clean) < 10:
-        await message.answer(
-            "❌ Введи корректный номер телефона",
-            reply_markup=get_withdrawal_cancel_kb()
-        )
-        return
-    
-    # Удаляем предыдущее сообщение
-    if prompt_msg_id:
-        try:
-            await bot.delete_message(message.chat.id, prompt_msg_id)
-        except:
-            pass
-    
-    await state.update_data(phone=phone_clean)
-    await process_withdrawal_complete(message, state, bot)
-
-
-async def process_withdrawal_complete(message: Message, state: FSMContext, bot: Bot):
-    """Завершение создания заявки на вывод"""
-    from keyboards.admin_kb import get_withdrawal_review_kb
-    
-    data = await state.get_data()
-    amount = data.get("withdrawal_amount")
-    bank = data.get("bank")
-    phone = data.get("phone")
-    
-    async with async_session() as session:
-        stmt = select(User).where(User.telegram_id == message.from_user.id)
-        result = await session.execute(stmt)
-        user = result.scalar_one_or_none()
-        
-        if not user:
-            await state.clear()
-            await message.answer("❌ Ошибка: пользователь не найден")
-            return
-        
-        if user.referral_balance < amount:
-            await state.clear()
-            await message.answer("❌ Недостаточно средств на балансе")
-            return
-        
-        # Создаём заявку на вывод
-        withdrawal = WithdrawalRequest(
-            user_id=user.id,
-            amount=amount,
-            bank=bank,
-            phone=phone,
-            status="pending"
-        )
-        session.add(withdrawal)
-        
-        # Списываем средства с баланса
-        user.referral_balance -= amount
-        
-        await session.commit()
-        await session.refresh(withdrawal)
-        
-        withdrawal_id = withdrawal.id
-        user_info = f"@{user.username}" if user.username else user.full_name
-    
-    await state.clear()
-    
-    # Уведомляем пользователя
-    await message.answer(
-        f"✅ *Заявка на вывод создана!*\n\n"
-        f"💰 Сумма: {int(amount)}₽\n"
-        f"🏦 Банк: {bank}\n"
-        f"📱 Телефон: {phone}\n\n"
-        f"⏳ Ожидай перевода. Обычно это занимает до 24 часов.",
-        parse_mode="Markdown",
-        reply_markup=get_referral_back_kb()
-    )
-    
-    # Уведомляем админа
-    await bot.send_message(
-        ADMIN_ID,
-        f"💸 *Новая заявка на вывод #{withdrawal_id}*\n\n"
-        f"👤 Пользователь: {user_info}\n"
-        f"🆔 ID: `{message.from_user.id}`\n"
-        f"💰 Сумма: {int(amount)}₽\n"
-        f"🏦 Банк: {bank}\n"
-        f"📱 Телефон: `{phone}`",
-        parse_mode="Markdown",
-        reply_markup=get_withdrawal_review_kb(withdrawal_id)
-    )

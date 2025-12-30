@@ -3256,18 +3256,26 @@ async def admin_server_user_detail(callback: CallbackQuery):
         name = f"@{user.username}" if user.username else user.full_name
         phone_info = f"📞 {user.phone}" if user.phone and user.phone != "5553535" else "📞 не указан"
         
-        if active_sub:
-            days_left = (active_sub.expires_at - datetime.utcnow()).days
-            sub_info = f"✅ Активна ({days_left} дн.)"
+        # Считаем оставшиеся дни из конфигов
+        days_left = 0
+        if user.configs:
+            for config in user.configs:
+                if config.expires_at and config.expires_at > datetime.utcnow():
+                    config_days = (config.expires_at - datetime.utcnow()).days
+                    if config_days > days_left:
+                        days_left = config_days
+        
+        if days_left > 0:
+            days_info = f"✅ {days_left} дн."
         else:
-            sub_info = "❌ Нет подписки"
+            days_info = "❌ 0 дн."
         
         text = (
             f"👤 *{name}*\n\n"
             f"🆔 ID: `{user.telegram_id}`\n"
             f"{phone_info}\n"
             f"📱 Конфигов: {configs_count}\n"
-            f"📊 Подписка: {sub_info}\n"
+            f"📊 Осталось: {days_info}\n"
             f"📅 Регистрация: {user.created_at.strftime('%d.%m.%Y')}"
         )
         
