@@ -1,5 +1,49 @@
 """Общие утилиты для бота"""
 
+from database import async_session, BotInstance
+from sqlalchemy import select
+
+
+async def get_bot_settings(bot_id: int) -> dict:
+    """Получает настройки конкретного бота по его ID"""
+    async with async_session() as session:
+        stmt = select(BotInstance).where(BotInstance.bot_id == bot_id)
+        result = await session.execute(stmt)
+        bot_instance = result.scalar_one_or_none()
+        
+        if bot_instance:
+            return {
+                "password": bot_instance.password,
+                "channel": bot_instance.channel,
+                "require_phone": bot_instance.require_phone,
+                "max_configs": bot_instance.max_configs,
+                "username": bot_instance.username,
+                "name": bot_instance.name
+            }
+        # Дефолтные настройки если бот не найден
+        return {
+            "password": None,
+            "channel": None,
+            "require_phone": False,
+            "max_configs": 3,
+            "username": None,
+            "name": None
+        }
+
+
+async def update_bot_setting(bot_id: int, key: str, value) -> bool:
+    """Обновляет настройку конкретного бота"""
+    async with async_session() as session:
+        stmt = select(BotInstance).where(BotInstance.bot_id == bot_id)
+        result = await session.execute(stmt)
+        bot_instance = result.scalar_one_or_none()
+        
+        if bot_instance:
+            setattr(bot_instance, key, value)
+            await session.commit()
+            return True
+        return False
+
 
 def transliterate_ru_to_en(text: str) -> str:
     """Транслитерация русских букв в английские"""

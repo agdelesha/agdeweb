@@ -9,17 +9,24 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 
 from config import TARIFFS, ADMIN_ID, LOCAL_MODE
-from database import async_session, User, Config, Subscription, Payment
+from database import async_session, User, Config, Subscription, Payment, Server, WithdrawalRequest
 from keyboards.admin_kb import (
     get_admin_menu_kb, get_users_list_kb, get_user_detail_kb,
     get_payment_review_kb, get_pending_payments_kb, get_confirm_delete_kb,
     get_user_configs_kb, get_admin_config_kb, get_settings_kb,
     get_password_settings_kb, get_channel_settings_kb, get_monitoring_settings_kb,
     get_phone_settings_kb, get_config_approval_kb, get_broadcast_menu_kb, 
-    get_broadcast_cancel_kb, get_broadcast_users_kb, get_gift_menu_kb
+    get_broadcast_cancel_kb, get_broadcast_users_kb, get_gift_menu_kb,
+    get_servers_list_kb, get_server_detail_kb, get_server_confirm_delete_kb,
+    get_server_add_cancel_kb, get_server_install_kb, get_server_edit_kb,
+    get_server_edit_cancel_kb, get_max_configs_cancel_kb, get_channel_change_cancel_kb,
+    get_user_max_configs_cancel_kb, get_server_clients_kb, get_server_broadcast_cancel_kb,
+    get_server_user_detail_kb, get_referrals_list_kb, get_referral_detail_kb,
+    get_referral_percent_cancel_kb, get_withdrawal_review_kb, get_withdrawals_list_kb
 )
 from keyboards.user_kb import get_main_menu_kb
 from services.wireguard import WireGuardService
+from services.wireguard_multi import WireGuardMultiService
 from services.settings import get_setting, set_setting
 from states.user_states import AdminStates
 from utils import transliterate_ru_to_en
@@ -32,6 +39,25 @@ def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
 
 
+async def create_config_multi_admin(config_name: str) -> tuple:
+    """
+    Создать конфиг с использованием мультисервера (для админки).
+    Возвращает (success, config_data, server_id, error_msg)
+    """
+    async with async_session() as session:
+        servers = await WireGuardMultiService.get_all_servers(session)
+        
+        if not servers:
+            success, config_data, msg = await WireGuardService.create_config(config_name)
+            return success, config_data, None, msg
+        
+        success, config_data, msg = await WireGuardMultiService.create_config(config_name, session)
+        
+        if success and config_data:
+            return True, config_data, config_data.server_id, msg
+        return False, None, None, msg
+
+
 @router.message(Command("admin"))
 async def cmd_admin(message: Message):
     if not is_admin(message.from_user.id):
@@ -42,11 +68,15 @@ async def cmd_admin(message: Message):
         stmt = select(func.count()).select_from(Payment).where(Payment.status == "pending")
         result = await session.execute(stmt)
         pending_count = result.scalar()
+        
+        stmt_w = select(func.count()).select_from(WithdrawalRequest).where(WithdrawalRequest.status == "pending")
+        result_w = await session.execute(stmt_w)
+        pending_withdrawals = result_w.scalar()
     
     await message.answer(
         "🔧 *Админ-панель*\n\nВыбери действие:",
         parse_mode="Markdown",
-        reply_markup=get_admin_menu_kb(pending_count)
+        reply_markup=get_admin_menu_kb(pending_count, pending_withdrawals)
     )
 
 
@@ -61,11 +91,15 @@ async def admin_menu(callback: CallbackQuery):
         stmt = select(func.count()).select_from(Payment).where(Payment.status == "pending")
         result = await session.execute(stmt)
         pending_count = result.scalar()
+        
+        stmt_w = select(func.count()).select_from(WithdrawalRequest).where(WithdrawalRequest.status == "pending")
+        result_w = await session.execute(stmt_w)
+        pending_withdrawals = result_w.scalar()
     
     await callback.message.edit_text(
         "🔧 *Админ-панель*\n\nВыбери действие:",
         parse_mode="Markdown",
-        reply_markup=get_admin_menu_kb(pending_count)
+        reply_markup=get_admin_menu_kb(pending_count, pending_withdrawals)
     )
 
 
@@ -113,11 +147,12 @@ async def admin_users_page(callback: CallbackQuery):
     )
 
 
-@router.callback_query(F.data.startswith("admin_user_") & ~F.data.contains("configs") & ~F.data.contains("payments"))
-async def admin_user_detail(callback: CallbackQuery):
+@router.callback_query(F.data.startswith("admin_user_") & ~F.data.contains("configs") & ~F.data.contains("payments") & ~F.data.contains("max_configs"))
+async def admin_user_detail(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
         return
     
+    await state.clear()  # Сбрасываем состояние при возврате
     await callback.answer()
     user_id = int(callback.data.replace("admin_user_", ""))
     
@@ -163,6 +198,7 @@ async def admin_user_detail(callback: CallbackQuery):
                 traffic_info += f"\n📊 {config.name}: ⬇️{rx} ⬆️{tx}"
     
     username = f"@{user.username}" if user.username else "—"
+    max_configs_text = f" (лимит: {user.max_configs})" if user.max_configs else ""
     
     await callback.message.edit_text(
         f"👤 Пользователь #{user.id}\n\n"
@@ -172,11 +208,11 @@ async def admin_user_detail(callback: CallbackQuery):
         f"📅 Регистрация: {user.created_at.strftime('%d.%m.%Y')}\n"
         f"🎁 Пробный: {'Использован' if user.trial_used else 'Доступен'}\n\n"
         f"📋 Подписка: {sub_status}\n"
-        f"📱 Конфигов: {len(user.configs)}\n"
+        f"📱 Конфигов: {len(user.configs)}{max_configs_text}\n"
         f"💰 Платежей: {len(user.payments)}"
         f"{traffic_info}",
         parse_mode=None,
-        reply_markup=get_user_detail_kb(user.id)
+        reply_markup=get_user_detail_kb(user.id, user.max_configs)
     )
 
 
@@ -377,6 +413,98 @@ async def admin_user_payments(callback: CallbackQuery):
     )
 
 
+@router.callback_query(F.data.startswith("admin_user_max_configs_"))
+async def admin_user_max_configs(callback: CallbackQuery, state: FSMContext):
+    """Настройка индивидуального лимита конфигов пользователя"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    user_id = int(callback.data.replace("admin_user_max_configs_", ""))
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.id == user_id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        
+        current_limit = user.max_configs
+        global_limit = await get_setting("max_configs") or "0"
+    
+    await state.set_state(AdminStates.waiting_for_user_max_configs)
+    await state.update_data(user_id=user_id, prompt_msg_id=callback.message.message_id)
+    
+    current_text = f"{current_limit}" if current_limit else f"глобальный ({global_limit if global_limit != '0' else '∞'})"
+    
+    await callback.message.edit_text(
+        f"📱 *Лимит конфигов для пользователя #{user_id}*\n\n"
+        f"Текущий лимит: {current_text}\n\n"
+        f"Введите новое значение:\n"
+        f"• Число — индивидуальный лимит\n"
+        f"• 0 — использовать глобальный лимит",
+        parse_mode="Markdown",
+        reply_markup=get_user_max_configs_cancel_kb(user_id)
+    )
+
+
+@router.message(AdminStates.waiting_for_user_max_configs)
+async def process_user_max_configs(message: Message, state: FSMContext, bot: Bot):
+    """Обработка ввода лимита конфигов пользователя"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    data = await state.get_data()
+    user_id = data.get("user_id")
+    prompt_msg_id = data.get("prompt_msg_id")
+    
+    if not user_id:
+        await state.clear()
+        await message.answer("❌ Ошибка: данные не найдены")
+        return
+    
+    try:
+        max_configs = int(message.text.strip())
+        if max_configs < 0:
+            raise ValueError()
+    except ValueError:
+        await message.answer(
+            "❌ Введите число (0 или больше)",
+            reply_markup=get_user_max_configs_cancel_kb(user_id)
+        )
+        return
+    
+    # Удаляем сообщение с кнопкой "отмена"
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.id == user_id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await state.clear()
+            await message.answer("❌ Пользователь не найден")
+            return
+        
+        user.max_configs = max_configs if max_configs > 0 else None
+        await session.commit()
+    
+    await state.clear()
+    
+    result_text = f"{max_configs}" if max_configs > 0 else "глобальный"
+    await message.answer(
+        f"✅ Лимит конфигов для пользователя #{user_id} установлен: {result_text}",
+        reply_markup=get_user_detail_kb(user_id, max_configs if max_configs > 0 else None)
+    )
+
+
 @router.callback_query(F.data == "admin_pending_payments")
 async def admin_pending_payments(callback: CallbackQuery, bot: Bot):
     if not is_admin(callback.from_user.id):
@@ -471,11 +599,17 @@ async def admin_approve_payment(callback: CallbackQuery, bot: Bot):
     existing_config_ids = []
     active_sub_id = None
     need_new_sub = False
+    referrer_id = None
+    referrer_telegram_id = None
+    referrer_percent = 10.0
+    payment_amount = 0
+    has_referral_discount = False
     
     async with async_session() as session:
         stmt = select(Payment).where(Payment.id == payment_id).options(
             selectinload(Payment.user).selectinload(User.subscriptions),
-            selectinload(Payment.user).selectinload(User.configs)
+            selectinload(Payment.user).selectinload(User.configs),
+            selectinload(Payment.user).selectinload(User.referrer)
         )
         result = await session.execute(stmt)
         payment = result.scalar_one_or_none()
@@ -495,6 +629,14 @@ async def admin_approve_payment(callback: CallbackQuery, bot: Bot):
         tariff_type = payment.tariff_type
         tariff = TARIFFS.get(payment.tariff_type, {})
         days = tariff.get("days", 30)
+        payment_amount = payment.amount
+        has_referral_discount = payment.has_referral_discount
+        
+        # Сохраняем инфо о реферере
+        if user.referrer:
+            referrer_id = user.referrer.id
+            referrer_telegram_id = user.referrer.telegram_id
+            referrer_percent = user.referrer.referral_percent
         
         active_sub = None
         for sub in user.subscriptions:
@@ -520,10 +662,11 @@ async def admin_approve_payment(callback: CallbackQuery, bot: Bot):
     config_created = False
     config_name = None
     config_data = None
+    server_id = None
     
     if not has_config:
         config_name = user_username if user_username else f"user{user_telegram_id}"
-        success, config_data, msg = await WireGuardService.create_config(config_name)
+        success, config_data, server_id, msg = await create_config_multi_admin(config_name)
         if success:
             config_created = True
         else:
@@ -570,6 +713,7 @@ async def admin_approve_payment(callback: CallbackQuery, bot: Bot):
         if config_created and config_data:
             config = Config(
                 user_id=user_id,
+                server_id=server_id,
                 name=config_name,
                 public_key=config_data.public_key,
                 preshared_key=config_data.preshared_key,
@@ -579,7 +723,37 @@ async def admin_approve_payment(callback: CallbackQuery, bot: Bot):
             )
             session.add(config)
         
+        # Отмечаем первую оплату и начисляем бонус рефереру
+        stmt_user = select(User).where(User.id == user_id)
+        result_user = await session.execute(stmt_user)
+        paying_user = result_user.scalar_one_or_none()
+        if paying_user and not paying_user.first_payment_done:
+            paying_user.first_payment_done = True
+        
+        # Начисляем бонус рефереру
+        if referrer_id:
+            stmt_referrer = select(User).where(User.id == referrer_id)
+            result_referrer = await session.execute(stmt_referrer)
+            referrer = result_referrer.scalar_one_or_none()
+            if referrer:
+                bonus = payment_amount * (referrer_percent / 100)
+                referrer.referral_balance += bonus
+        
         await session.commit()
+    
+    # Уведомляем реферера о начислении бонуса
+    if referrer_telegram_id:
+        bonus = payment_amount * (referrer_percent / 100)
+        try:
+            await bot.send_message(
+                referrer_telegram_id,
+                f"🎉 *Реферальный бонус!*\n\n"
+                f"Твой реферал оплатил подписку.\n"
+                f"💰 Тебе начислено: *{int(bonus)}₽*",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.error(f"Ошибка уведомления реферера: {e}")
     
     await callback.answer("✅ Платёж подтверждён")
     
@@ -736,13 +910,18 @@ async def admin_gift_subscription(callback: CallbackQuery, bot: Bot):
         user_msg = f"🎁 *Тебе подарена подписка на {days} дней!*"
     
     async with async_session() as session:
-        stmt = select(User).where(User.id == user_id).options(selectinload(User.configs))
+        stmt = select(User).where(User.id == user_id).options(selectinload(User.configs), selectinload(User.subscriptions))
         result = await session.execute(stmt)
         user = result.scalar_one_or_none()
         
         if not user:
             await callback.answer("Пользователь не найден", show_alert=True)
             return
+        
+        # Удаляем все старые подписки при выдаче бессрочной
+        if gift_type == "unlimited":
+            for old_sub in user.subscriptions:
+                await session.delete(old_sub)
         
         # Создаём подписку
         if days:
@@ -768,13 +947,16 @@ async def admin_gift_subscription(callback: CallbackQuery, bot: Bot):
         # Создаём конфиг если нет
         config_created = False
         config_name = None
+        config_data = None
+        server_id = None
         if not user.configs:
             config_name = user.username if user.username else f"user{user.telegram_id}"
-            success, config_data, msg = await WireGuardService.create_config(config_name)
+            success, config_data, server_id, msg = await create_config_multi_admin(config_name)
             
             if success:
                 config = Config(
                     user_id=user.id,
+                    server_id=server_id,
                     name=config_name,
                     public_key=config_data.public_key,
                     preshared_key=config_data.preshared_key,
@@ -868,7 +1050,7 @@ async def admin_add_config(callback: CallbackQuery, bot: Bot):
         config_num = len(user.configs) + 1
         config_name = f"{user.username or 'user' + str(user.telegram_id)}_{config_num}"
         
-        success, config_data, msg = await WireGuardService.create_config(config_name)
+        success, config_data, server_id, msg = await create_config_multi_admin(config_name)
         
         if not success:
             await callback.answer(f"Ошибка: {msg}", show_alert=True)
@@ -876,6 +1058,7 @@ async def admin_add_config(callback: CallbackQuery, bot: Bot):
         
         config = Config(
             user_id=user.id,
+            server_id=server_id,
             name=config_name,
             public_key=config_data.public_key,
             preshared_key=config_data.preshared_key,
@@ -1080,13 +1263,16 @@ async def cmd_gift(message: Message, bot: Bot):
         configs = result_configs.scalars().all()
         
         config_created = False
+        config_data = None
+        server_id = None
         if not configs:
             config_name = user.username if user.username else f"user{user.telegram_id}"
-            success, config_data, msg = await WireGuardService.create_config(config_name)
+            success, config_data, server_id, msg = await create_config_multi_admin(config_name)
             
             if success:
                 config = Config(
                     user_id=user.id,
+                    server_id=server_id,
                     name=config_name,
                     public_key=config_data.public_key,
                     preshared_key=config_data.preshared_key,
@@ -1191,7 +1377,7 @@ async def admin_approve_config_request(callback: CallbackQuery, bot: Bot):
     else:
         config_name = f"{base_name}{config_count + 1}" if config_count > 0 else base_name
     
-    success, config_data, msg = await WireGuardService.create_config(config_name)
+    success, config_data, server_id, msg = await create_config_multi_admin(config_name)
     
     if not success:
         await callback.answer(f"Ошибка создания конфига: {msg}", show_alert=True)
@@ -1200,6 +1386,7 @@ async def admin_approve_config_request(callback: CallbackQuery, bot: Bot):
     async with async_session() as session:
         config = Config(
             user_id=user_id,
+            server_id=server_id,
             name=config_name,
             public_key=config_data.public_key,
             preshared_key=config_data.preshared_key,
@@ -1428,18 +1615,20 @@ async def process_new_password(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data == "settings_channel")
-async def settings_channel(callback: CallbackQuery):
+async def settings_channel(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
         return
     
+    await state.clear()  # Сбрасываем состояние при возврате
     await callback.answer()
     channel_required = await get_setting("channel_required") == "1"
+    channel_name = await get_setting("channel_name") or "agdevpn"
     status = "🟢 Включена" if channel_required else "🔴 Выключена"
     
     await callback.message.edit_text(
         f"📢 *Подписка на канал*\n\n"
         f"Статус: {status}\n"
-        f"Канал: @agdevpn",
+        f"Канал: @{channel_name}",
         parse_mode="Markdown",
         reply_markup=get_channel_settings_kb(channel_required)
     )
@@ -1451,12 +1640,13 @@ async def settings_channel_on(callback: CallbackQuery):
         return
     
     await set_setting("channel_required", "1")
+    channel_name = await get_setting("channel_name") or "agdevpn"
     await callback.answer("✅ Подписка на канал включена")
     
     await callback.message.edit_text(
         f"📢 *Подписка на канал*\n\n"
         f"Статус: 🟢 Включена\n"
-        f"Канал: @agdevpn",
+        f"Канал: @{channel_name}",
         parse_mode="Markdown",
         reply_markup=get_channel_settings_kb(True)
     )
@@ -1468,14 +1658,69 @@ async def settings_channel_off(callback: CallbackQuery):
         return
     
     await set_setting("channel_required", "0")
+    channel_name = await get_setting("channel_name") or "agdevpn"
     await callback.answer("✅ Подписка на канал выключена")
     
     await callback.message.edit_text(
         f"📢 *Подписка на канал*\n\n"
         f"Статус: 🔴 Выключена\n"
-        f"Канал: @agdevpn",
+        f"Канал: @{channel_name}",
         parse_mode="Markdown",
         reply_markup=get_channel_settings_kb(False)
+    )
+
+
+@router.callback_query(F.data == "settings_channel_change")
+async def settings_channel_change(callback: CallbackQuery, state: FSMContext):
+    """Изменение названия канала"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    channel_name = await get_setting("channel_name") or "agdevpn"
+    
+    await state.set_state(AdminStates.waiting_for_channel_name)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
+    await callback.message.edit_text(
+        f"✏️ *Изменение канала*\n\n"
+        f"Текущий канал: @{channel_name}\n\n"
+        f"Введите название канала (без @):",
+        parse_mode="Markdown",
+        reply_markup=get_channel_change_cancel_kb()
+    )
+
+
+@router.message(AdminStates.waiting_for_channel_name)
+async def process_channel_name(message: Message, state: FSMContext, bot: Bot):
+    """Обработка ввода названия канала"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    
+    # Удаляем сообщение с кнопкой "отмена"
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    channel_name = message.text.strip().replace("@", "")
+    
+    await set_setting("channel_name", channel_name)
+    await state.clear()
+    
+    channel_required = await get_setting("channel_required") == "1"
+    status = "🟢 Включена" if channel_required else "🔴 Выключена"
+    
+    await message.answer(
+        f"✅ Канал изменён на @{channel_name}\n\n"
+        f"📢 *Подписка на канал*\n\n"
+        f"Статус: {status}\n"
+        f"Канал: @{channel_name}",
+        parse_mode="Markdown",
+        reply_markup=get_channel_settings_kb(channel_required)
     )
 
 
@@ -1532,22 +1777,26 @@ async def settings_phone_off(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "settings_config_approval")
-async def settings_config_approval(callback: CallbackQuery):
+async def settings_config_approval(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
         return
     
+    await state.clear()  # Сбрасываем состояние при возврате
     await callback.answer()
     config_approval = await get_setting("config_approval_required") != "0"
+    max_configs = int(await get_setting("max_configs") or "0")
     
     status = "🟢 Включено" if config_approval else "🔴 Выключено"
     desc = "_Требуется подтверждение админа_" if config_approval else "_Конфиг создаётся автоматически_"
+    max_text = f"Макс. конфигов: *{max_configs}*" if max_configs > 0 else "Макс. конфигов: *∞ (без лимита)*"
     
     await callback.message.edit_text(
         f"📋 *Подтверждение доп. конфига*\n\n"
-        f"Статус: {status}\n\n"
+        f"Статус: {status}\n"
+        f"{max_text}\n\n"
         f"{desc}",
         parse_mode="Markdown",
-        reply_markup=get_config_approval_kb(config_approval)
+        reply_markup=get_config_approval_kb(config_approval, max_configs)
     )
 
 
@@ -1557,6 +1806,7 @@ async def settings_config_approval_on(callback: CallbackQuery):
         return
     
     await set_setting("config_approval_required", "1")
+    max_configs = int(await get_setting("max_configs") or "0")
     await callback.answer("✅ Подтверждение включено")
     
     await callback.message.edit_text(
@@ -1564,7 +1814,7 @@ async def settings_config_approval_on(callback: CallbackQuery):
         f"Статус: 🟢 Включено\n\n"
         f"_Требуется подтверждение админа_",
         parse_mode="Markdown",
-        reply_markup=get_config_approval_kb(True)
+        reply_markup=get_config_approval_kb(True, max_configs)
     )
 
 
@@ -1574,6 +1824,7 @@ async def settings_config_approval_off(callback: CallbackQuery):
         return
     
     await set_setting("config_approval_required", "0")
+    max_configs = int(await get_setting("max_configs") or "0")
     await callback.answer("✅ Подтверждение выключено")
     
     await callback.message.edit_text(
@@ -1581,7 +1832,68 @@ async def settings_config_approval_off(callback: CallbackQuery):
         f"Статус: 🔴 Выключено\n\n"
         f"_Конфиг создаётся автоматически_",
         parse_mode="Markdown",
-        reply_markup=get_config_approval_kb(False)
+        reply_markup=get_config_approval_kb(False, max_configs)
+    )
+
+
+@router.callback_query(F.data == "settings_max_configs")
+async def settings_max_configs(callback: CallbackQuery, state: FSMContext):
+    """Настройка глобального лимита конфигов"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    max_configs = await get_setting("max_configs") or "0"
+    
+    await state.set_state(AdminStates.waiting_for_max_configs)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
+    await callback.message.edit_text(
+        f"📱 *Максимальное количество конфигов*\n\n"
+        f"Текущий лимит: {max_configs if max_configs != '0' else '∞ (без лимита)'}\n\n"
+        f"Введите новое значение (0 = без лимита):",
+        parse_mode="Markdown",
+        reply_markup=get_max_configs_cancel_kb()
+    )
+
+
+@router.message(AdminStates.waiting_for_max_configs)
+async def process_max_configs(message: Message, state: FSMContext, bot: Bot):
+    """Обработка ввода лимита конфигов"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    
+    try:
+        max_configs = int(message.text.strip())
+        if max_configs < 0:
+            raise ValueError()
+    except ValueError:
+        await message.answer(
+            "❌ Введите число (0 или больше)",
+            reply_markup=get_max_configs_cancel_kb()
+        )
+        return
+    
+    # Удаляем сообщение с кнопкой "отмена"
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    await set_setting("max_configs", str(max_configs))
+    await state.clear()
+    
+    config_approval = await get_setting("config_approval_required") != "0"
+    
+    await message.answer(
+        f"✅ Лимит конфигов установлен: {max_configs if max_configs > 0 else '∞ (без лимита)'}\n\n"
+        f"📋 *Подтверждение доп. конфига*\n\n"
+        f"Статус: {'🟢 Включено' if config_approval else '🔴 Выключено'}",
+        parse_mode="Markdown",
+        reply_markup=get_config_approval_kb(config_approval, max_configs)
     )
 
 
@@ -1767,6 +2079,7 @@ async def broadcast_all(callback: CallbackQuery, state: FSMContext):
     
     await callback.answer()
     await state.set_state(AdminStates.waiting_for_broadcast_all)
+    await state.update_data(broadcast_prompt_msg_id=callback.message.message_id)
     
     await callback.message.edit_text(
         "📢 *Рассылка всем пользователям*\n\n"
@@ -1837,7 +2150,10 @@ async def broadcast_user_select(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Пользователь не найден", show_alert=True)
         return
     
-    await state.update_data(broadcast_user_id=user_telegram_id)
+    await state.update_data(
+        broadcast_user_id=user_telegram_id,
+        broadcast_prompt_msg_id=callback.message.message_id
+    )
     await state.set_state(AdminStates.waiting_for_broadcast_user)
     
     name = user.username or user.full_name
@@ -1858,6 +2174,16 @@ async def broadcast_user_select(callback: CallbackQuery, state: FSMContext):
 async def process_broadcast_all(message: Message, state: FSMContext, bot: Bot):
     if not is_admin(message.from_user.id):
         return
+    
+    data = await state.get_data()
+    prompt_msg_id = data.get("broadcast_prompt_msg_id")
+    
+    # Удаляем сообщение с кнопкой "отмена"
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
     
     async with async_session() as session:
         stmt = select(User).where(User.is_blocked == False)
@@ -1915,11 +2241,19 @@ async def process_broadcast_user(message: Message, state: FSMContext, bot: Bot):
     
     data = await state.get_data()
     user_telegram_id = data.get("broadcast_user_id")
+    prompt_msg_id = data.get("broadcast_prompt_msg_id")
     
     if not user_telegram_id:
         await state.clear()
         await message.answer("❌ Ошибка: пользователь не выбран")
         return
+    
+    # Удаляем сообщение с кнопкой "отмена"
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
     
     try:
         if message.text:
@@ -1960,3 +2294,1841 @@ async def process_broadcast_user(message: Message, state: FSMContext, bot: Bot):
             f"❌ Ошибка отправки: {e}",
             reply_markup=get_broadcast_menu_kb()
         )
+
+
+# ==================== УПРАВЛЕНИЕ СЕРВЕРАМИ ====================
+
+@router.callback_query(F.data == "admin_servers")
+async def admin_servers_list(callback: CallbackQuery, state: FSMContext):
+    """Список серверов"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    await state.clear()  # Сбрасываем состояние при возврате к списку
+    await callback.answer()
+    async with async_session() as session:
+        servers = await WireGuardMultiService.get_all_servers(session)
+        
+        # Получаем количество клиентов для каждого сервера
+        client_counts = {}
+        for server in servers:
+            count = await WireGuardMultiService.get_server_client_count(session, server.id)
+            client_counts[server.id] = count
+    
+    if not servers:
+        text = "🖥 *Серверы*\n\nСерверов пока нет. Добавьте первый сервер."
+    else:
+        text = f"🖥 *Серверы ({len(servers)}):*"
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=get_servers_list_kb(servers, client_counts)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_server_") & ~F.data.startswith("admin_server_add") & ~F.data.startswith("admin_server_check_") & ~F.data.startswith("admin_server_toggle_") & ~F.data.startswith("admin_server_edit_") & ~F.data.startswith("admin_server_stats_") & ~F.data.startswith("admin_server_delete_") & ~F.data.startswith("admin_server_confirm_delete_") & ~F.data.startswith("admin_server_install_") & ~F.data.startswith("admin_server_clients_") & ~F.data.startswith("admin_server_broadcast_"))
+async def admin_server_detail(callback: CallbackQuery):
+    """Детальная информация о сервере"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    await callback.answer()
+    server_id = int(callback.data.split("_")[-1])
+    
+    async with async_session() as session:
+        server = await WireGuardMultiService.get_server_by_id(session, server_id)
+        if not server:
+            await callback.message.edit_text(
+                "❌ Сервер не найден",
+                reply_markup=get_servers_list_kb([])
+            )
+            return
+        
+        client_count = await WireGuardMultiService.get_server_client_count(session, server_id)
+    
+    status = "🟢 Активен" if server.is_active else "🔴 Отключен"
+    
+    text = (
+        f"🖥 *{server.name}*\n\n"
+        f"*Хост:* `{server.host}`\n"
+        f"*Пароль:* `{server.ssh_password}`\n"
+        f"*SSH:* {server.ssh_user}@{server.host}:{server.ssh_port}\n"
+        f"*Статус:* {status}\n"
+        f"*Клиентов:* {client_count}/{server.max_clients}\n"
+        f"*Приоритет:* {server.priority}\n"
+        f"*Интерфейс:* {server.wg_interface}\n"
+        f"*Создан:* {server.created_at.strftime('%d.%m.%Y')}"
+    )
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=get_server_detail_kb(server_id, server.is_active)
+    )
+
+
+@router.callback_query(F.data == "admin_server_add")
+async def admin_server_add(callback: CallbackQuery, state: FSMContext):
+    """Начало добавления сервера"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    await callback.answer()
+    await state.set_state(AdminStates.waiting_for_server_data)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
+    
+    await callback.message.edit_text(
+        "🖥 *Добавление сервера*\n\n"
+        "Введите данные сервера в формате:\n"
+        "`имя|хост|ssh_пароль|макс_клиентов`\n\n"
+        "*Пример:*\n"
+        "`Germany-1|185.123.45.67|mypassword123|30`\n\n"
+        "SSH пользователь по умолчанию: root\n"
+        "SSH порт по умолчанию: 22",
+        parse_mode="Markdown",
+        reply_markup=get_server_add_cancel_kb()
+    )
+
+
+@router.message(AdminStates.waiting_for_server_data)
+async def process_server_add(message: Message, state: FSMContext, bot: Bot):
+    """Обработка добавления сервера"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    
+    # Удаляем сообщение с кнопкой "отмена"
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    logger.info(f"[process_server_add] Начало добавления сервера: {message.text[:50]}...")
+    parts = message.text.strip().split("|")
+    if len(parts) < 3:
+        await message.answer(
+            "❌ Неверный формат. Используйте:\n"
+            "`имя|хост|ssh_пароль|макс_клиентов`",
+            parse_mode="Markdown",
+            reply_markup=get_server_add_cancel_kb()
+        )
+        return
+    
+    name = parts[0].strip()
+    host = parts[1].strip()
+    ssh_password = parts[2].strip()
+    max_clients = int(parts[3].strip()) if len(parts) > 3 else 30
+    
+    # Проверяем, нет ли сервера с таким хостом
+    async with async_session() as session:
+        existing = await session.execute(
+            select(Server).where(Server.host == host)
+        )
+        if existing.scalar_one_or_none():
+            await message.answer(
+                f"❌ Сервер с хостом `{host}` уже существует",
+                parse_mode="Markdown",
+                reply_markup=get_server_add_cancel_kb()
+            )
+            return
+        
+        # Создаём сервер
+        server = Server(
+            name=name,
+            host=host,
+            ssh_user="root",
+            ssh_port=22,
+            ssh_password=ssh_password,
+            max_clients=max_clients,
+            is_active=False,  # Пока не активен, до проверки WG
+            priority=0
+        )
+        session.add(server)
+        await session.commit()
+        await session.refresh(server)
+        server_id = server.id
+    
+    # Проверяем подключение (вне сессии)
+    status_msg = await message.answer("⏳ Проверяю подключение к серверу...")
+    
+    # Создаём временный объект для проверки (со всеми нужными полями)
+    temp_server = Server(
+        id=server_id,
+        name=name,
+        host=host,
+        ssh_user="root",
+        ssh_port=22,
+        ssh_password=ssh_password,
+        max_clients=max_clients,
+        wg_interface="wg0",
+        wg_conf_path="/etc/wireguard/wg0.conf",
+        client_dir="/etc/wireguard/clients",
+        add_script="/usr/local/bin/wg-new-conf.sh",
+        remove_script="/usr/local/bin/wg-remove-client.sh"
+    )
+    
+    logger.info(f"[process_server_add] Проверяю SSH подключение к {host}...")
+    success, msg = await WireGuardMultiService.check_server_connection(temp_server)
+    logger.info(f"[process_server_add] SSH результат: success={success}, msg={msg}")
+    
+    if not success:
+        await status_msg.edit_text(
+            f"❌ *Не удалось подключиться к серверу*\n\n"
+            f"*Хост:* `{host}`\n"
+            f"*Ошибка:* {msg}\n\n"
+            f"Сервер добавлен, но неактивен. Проверьте данные.",
+            parse_mode="Markdown",
+            reply_markup=get_server_detail_kb(server_id, False)
+        )
+        await state.clear()
+        return
+    
+    # Проверяем готовность WireGuard
+    logger.info(f"[process_server_add] Начинаю проверку WireGuard на {host}...")
+    try:
+        await status_msg.edit_text("⏳ Проверяю WireGuard на сервере...")
+    except Exception:
+        pass
+    
+    wg_ready, wg_msg = await WireGuardMultiService.check_wireguard_ready(temp_server)
+    logger.info(f"[process_server_add] WireGuard результат: ready={wg_ready}, msg={wg_msg}")
+    
+    if wg_ready:
+        # WireGuard готов — активируем сервер
+        async with async_session() as session:
+            server = await WireGuardMultiService.get_server_by_id(session, server_id)
+            if server:
+                server.is_active = True
+                await session.commit()
+        
+        try:
+            await status_msg.edit_text(
+                f"✅ *Сервер добавлен и готов к работе!*\n\n"
+                f"*Имя:* {name}\n"
+                f"*Хост:* `{host}`\n"
+                f"*Пароль:* `{ssh_password}`\n"
+                f"*Макс. клиентов:* {max_clients}\n\n"
+                f"✅ WireGuard готов",
+                parse_mode="Markdown",
+                reply_markup=get_server_detail_kb(server_id, True)
+            )
+        except Exception:
+            await message.answer(
+                f"✅ *Сервер добавлен и готов к работе!*\n\n"
+                f"*Имя:* {name}\n"
+                f"*Хост:* `{host}`\n"
+                f"*Пароль:* `{ssh_password}`\n"
+                f"*Макс. клиентов:* {max_clients}\n\n"
+                f"✅ WireGuard готов",
+                parse_mode="Markdown",
+                reply_markup=get_server_detail_kb(server_id, True)
+            )
+        await state.clear()
+        return
+    
+    # WireGuard не готов — предлагаем установить
+    try:
+        await status_msg.edit_text(
+            f"⚠️ *WireGuard не настроен на сервере*\n\n"
+            f"*Хост:* `{host}`\n"
+            f"*Статус:* {wg_msg}\n\n"
+            f"Хотите установить WireGuard автоматически?\n"
+            f"Это займёт 1-2 минуты.",
+            parse_mode="Markdown",
+            reply_markup=get_server_install_kb(server_id)
+        )
+    except Exception:
+        await message.answer(
+            f"⚠️ *WireGuard не настроен на сервере*\n\n"
+            f"*Хост:* `{host}`\n"
+            f"*Статус:* {wg_msg}\n\n"
+            f"Хотите установить WireGuard автоматически?\n"
+            f"Это займёт 1-2 минуты.",
+            parse_mode="Markdown",
+            reply_markup=get_server_install_kb(server_id)
+        )
+    
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("admin_server_check_"))
+async def admin_server_check(callback: CallbackQuery):
+    """Проверка подключения к серверу"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    server_id = int(callback.data.split("_")[-1])
+    await callback.answer("⏳ Проверяю подключение...")
+    
+    async with async_session() as session:
+        server = await WireGuardMultiService.get_server_by_id(session, server_id)
+        if not server:
+            await callback.message.edit_text("❌ Сервер не найден")
+            return
+        
+        # Проверяем SSH
+        ssh_ok, ssh_msg = await WireGuardMultiService.check_server_connection(server)
+        
+        # Проверяем WireGuard
+        if ssh_ok:
+            wg_ok, wg_msg = await WireGuardMultiService.check_wireguard_installed(server)
+        else:
+            wg_ok, wg_msg = False, "SSH недоступен"
+        
+        client_count = await WireGuardMultiService.get_server_client_count(session, server_id)
+    
+    status = "🟢 Активен" if server.is_active else "🔴 Отключен"
+    ssh_status = "✅" if ssh_ok else "❌"
+    wg_status = "✅" if wg_ok else "❌"
+    
+    text = (
+        f"🖥 *{server.name}*\n\n"
+        f"*Хост:* `{server.host}`\n"
+        f"*Статус:* {status}\n"
+        f"*Клиентов:* {client_count}/{server.max_clients}\n\n"
+        f"*Проверка подключения:*\n"
+        f"{ssh_status} SSH: {ssh_msg}\n"
+        f"{wg_status} WireGuard: {wg_msg}"
+    )
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=get_server_detail_kb(server_id, server.is_active)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_server_toggle_"))
+async def admin_server_toggle(callback: CallbackQuery):
+    """Включение/отключение сервера"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    server_id = int(callback.data.split("_")[-1])
+    
+    async with async_session() as session:
+        server = await WireGuardMultiService.get_server_by_id(session, server_id)
+        if not server:
+            await callback.answer("❌ Сервер не найден", show_alert=True)
+            return
+        
+        server.is_active = not server.is_active
+        await session.commit()
+        
+        status = "включен" if server.is_active else "отключен"
+        await callback.answer(f"✅ Сервер {status}")
+        
+        client_count = await WireGuardMultiService.get_server_client_count(session, server_id)
+    
+    status_text = "🟢 Активен" if server.is_active else "🔴 Отключен"
+    
+    text = (
+        f"🖥 *{server.name}*\n\n"
+        f"*Хост:* `{server.host}`\n"
+        f"*SSH:* {server.ssh_user}@{server.host}:{server.ssh_port}\n"
+        f"*Статус:* {status_text}\n"
+        f"*Клиентов:* {client_count}/{server.max_clients}\n"
+        f"*Приоритет:* {server.priority}"
+    )
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=get_server_detail_kb(server_id, server.is_active)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_server_delete_"))
+async def admin_server_delete(callback: CallbackQuery):
+    """Подтверждение удаления сервера"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    await callback.answer()
+    server_id = int(callback.data.split("_")[-1])
+    
+    async with async_session() as session:
+        server = await WireGuardMultiService.get_server_by_id(session, server_id)
+        client_count = await WireGuardMultiService.get_server_client_count(session, server_id)
+    
+    if not server:
+        await callback.message.edit_text("❌ Сервер не найден")
+        return
+    
+    warning = ""
+    if client_count > 0:
+        warning = f"\n\n⚠️ *Внимание!* На сервере {client_count} активных конфигов!"
+    
+    await callback.message.edit_text(
+        f"🗑 *Удалить сервер {server.name}?*{warning}",
+        parse_mode="Markdown",
+        reply_markup=get_server_confirm_delete_kb(server_id)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_server_confirm_delete_"))
+async def admin_server_confirm_delete(callback: CallbackQuery):
+    """Удаление сервера"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    server_id = int(callback.data.split("_")[-1])
+    
+    async with async_session() as session:
+        server = await WireGuardMultiService.get_server_by_id(session, server_id)
+        if not server:
+            await callback.answer("❌ Сервер не найден", show_alert=True)
+            return
+        
+        server_name = server.name
+        
+        # Отключаем все конфиги этого сервера и обнуляем server_id
+        configs_result = await session.execute(
+            select(Config).where(Config.server_id == server_id)
+        )
+        configs = configs_result.scalars().all()
+        disabled_count = 0
+        for config in configs:
+            config.is_active = False
+            config.server_id = None  # Сервер удалён
+            disabled_count += 1
+        
+        await session.delete(server)
+        await session.commit()
+    
+    await callback.answer(f"✅ Сервер {server_name} удален, {disabled_count} конфигов отключено")
+    
+    # Возвращаемся к списку серверов
+    async with async_session() as session:
+        servers = await WireGuardMultiService.get_all_servers(session)
+        client_counts = {}
+        for s in servers:
+            count = await WireGuardMultiService.get_server_client_count(session, s.id)
+            client_counts[s.id] = count
+    
+    await callback.message.edit_text(
+        f"🖥 *Серверы ({len(servers)}):*" if servers else "🖥 *Серверы*\n\nСерверов пока нет.",
+        parse_mode="Markdown",
+        reply_markup=get_servers_list_kb(servers, client_counts)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_server_stats_"))
+async def admin_server_stats(callback: CallbackQuery):
+    """Статистика сервера"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    server_id = int(callback.data.split("_")[-1])
+    await callback.answer("⏳ Загружаю статистику...")
+    
+    async with async_session() as session:
+        server = await WireGuardMultiService.get_server_by_id(session, server_id)
+        if not server:
+            await callback.message.edit_text("❌ Сервер не найден")
+            return
+        
+        client_count = await WireGuardMultiService.get_server_client_count(session, server_id)
+        
+        # Получаем статистику трафика
+        traffic_stats = await WireGuardMultiService.get_traffic_stats(server)
+    
+    total_rx = sum(p.get('received', 0) for p in traffic_stats.values())
+    total_tx = sum(p.get('sent', 0) for p in traffic_stats.values())
+    
+    text = (
+        f"📊 *Статистика: {server.name}*\n\n"
+        f"*Активных пиров:* {len(traffic_stats)}\n"
+        f"*Конфигов в БД:* {client_count}\n\n"
+        f"*Трафик:*\n"
+        f"📥 Получено: {WireGuardMultiService.format_bytes(total_rx)}\n"
+        f"📤 Отправлено: {WireGuardMultiService.format_bytes(total_tx)}"
+    )
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=get_server_detail_kb(server_id, server.is_active)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_server_install_"))
+async def admin_server_install(callback: CallbackQuery):
+    """Установка WireGuard на сервер"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    server_id = int(callback.data.split("_")[-1])
+    await callback.answer()
+    
+    async with async_session() as session:
+        server = await WireGuardMultiService.get_server_by_id(session, server_id)
+        if not server:
+            await callback.message.edit_text("❌ Сервер не найден")
+            return
+        
+        # Сохраняем данные для обновления статуса
+        server_name = server.name
+        server_host = server.host
+        server_password = server.ssh_password
+        
+        # Начинаем установку
+        await callback.message.edit_text(
+            f"🚀 *Установка WireGuard на {server_name}*\n\n"
+            f"*Хост:* `{server_host}`\n\n"
+            f"⏳ Подключение к серверу...",
+            parse_mode="Markdown"
+        )
+        
+        # Callback для обновления прогресса
+        async def progress_callback(step: str, msg: str):
+            step_icons = {
+                "connect": "🔌",
+                "check": "🔍",
+                "install": "📦",
+                "sysctl": "⚙️",
+                "keys": "🔑",
+                "interface": "🌐",
+                "config": "📝",
+                "scripts": "📜",
+                "start": "🚀",
+                "verify": "✅",
+                "done": "🎉"
+            }
+            icon = step_icons.get(step, "⏳")
+            try:
+                await callback.message.edit_text(
+                    f"🚀 *Установка WireGuard на {server_name}*\n\n"
+                    f"*Хост:* `{server_host}`\n\n"
+                    f"{icon} {msg}",
+                    parse_mode="Markdown"
+                )
+            except:
+                pass  # Игнорируем ошибки редактирования
+        
+        # Запускаем установку
+        success, result_msg = await WireGuardMultiService.install_wireguard(server, progress_callback)
+        
+        if success:
+            # Активируем сервер
+            server.is_active = True
+            await session.commit()
+            
+            await callback.message.edit_text(
+                f"✅ *WireGuard успешно установлен!*\n\n"
+                f"*Сервер:* {server_name}\n"
+                f"*Хост:* `{server_host}`\n"
+                f"*Пароль:* `{server_password}`\n\n"
+                f"{result_msg}\n\n"
+                f"Сервер активирован и готов к работе!",
+                parse_mode="Markdown",
+                reply_markup=get_server_detail_kb(server_id, True)
+            )
+        else:
+            await callback.message.edit_text(
+                f"❌ *Ошибка установки WireGuard*\n\n"
+                f"*Сервер:* {server_name}\n"
+                f"*Хост:* `{server_host}`\n\n"
+                f"*Ошибка:* {result_msg}\n\n"
+                f"Попробуйте установить вручную или проверьте доступ к серверу.",
+                parse_mode="Markdown",
+                reply_markup=get_server_install_kb(server_id)
+            )
+
+
+@router.callback_query(F.data.startswith("admin_server_edit_") & ~F.data.startswith("admin_server_edit_name_") & ~F.data.startswith("admin_server_edit_max_") & ~F.data.startswith("admin_server_edit_priority_"))
+async def admin_server_edit_menu(callback: CallbackQuery):
+    """Меню редактирования сервера"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    server_id = int(callback.data.split("_")[-1])
+    await callback.answer()
+    
+    async with async_session() as session:
+        server = await WireGuardMultiService.get_server_by_id(session, server_id)
+        if not server:
+            await callback.message.edit_text("❌ Сервер не найден")
+            return
+        
+        await callback.message.edit_text(
+            f"✏️ *Редактирование сервера*\n\n"
+            f"*Имя:* {server.name}\n"
+            f"*Хост:* `{server.host}`\n"
+            f"*Макс. клиентов:* {server.max_clients}\n"
+            f"*Приоритет:* {server.priority}\n\n"
+            f"Выберите что изменить:",
+            parse_mode="Markdown",
+            reply_markup=get_server_edit_kb(server_id)
+        )
+
+
+@router.callback_query(F.data.startswith("admin_server_edit_name_"))
+async def admin_server_edit_name_start(callback: CallbackQuery, state: FSMContext):
+    """Начало редактирования имени сервера"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    server_id = int(callback.data.split("_")[-1])
+    await callback.answer()
+    
+    await state.set_state(AdminStates.waiting_for_server_edit)
+    await state.update_data(server_id=server_id, edit_field="name", prompt_msg_id=callback.message.message_id)
+    
+    await callback.message.edit_text(
+        "📝 *Изменение имени сервера*\n\n"
+        "Введите новое имя:",
+        parse_mode="Markdown",
+        reply_markup=get_server_edit_cancel_kb(server_id)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_server_edit_max_"))
+async def admin_server_edit_max_start(callback: CallbackQuery, state: FSMContext):
+    """Начало редактирования макс. клиентов"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    server_id = int(callback.data.split("_")[-1])
+    await callback.answer()
+    
+    await state.set_state(AdminStates.waiting_for_server_edit)
+    await state.update_data(server_id=server_id, edit_field="max_clients", prompt_msg_id=callback.message.message_id)
+    
+    await callback.message.edit_text(
+        "👥 *Изменение макс. клиентов*\n\n"
+        "Введите новое значение (число):",
+        parse_mode="Markdown",
+        reply_markup=get_server_edit_cancel_kb(server_id)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_server_edit_priority_"))
+async def admin_server_edit_priority_start(callback: CallbackQuery, state: FSMContext):
+    """Начало редактирования приоритета"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    server_id = int(callback.data.split("_")[-1])
+    await callback.answer()
+    
+    await state.set_state(AdminStates.waiting_for_server_edit)
+    await state.update_data(server_id=server_id, edit_field="priority", prompt_msg_id=callback.message.message_id)
+    
+    await callback.message.edit_text(
+        "⭐ *Изменение приоритета*\n\n"
+        "Введите новое значение (число).\n"
+        "Чем выше число — тем приоритетнее сервер при распределении.",
+        parse_mode="Markdown",
+        reply_markup=get_server_edit_cancel_kb(server_id)
+    )
+
+
+@router.message(AdminStates.waiting_for_server_edit)
+async def process_server_edit(message: Message, state: FSMContext, bot: Bot):
+    """Обработка редактирования сервера"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    data = await state.get_data()
+    server_id = data.get("server_id")
+    edit_field = data.get("edit_field")
+    prompt_msg_id = data.get("prompt_msg_id")
+    
+    # Удаляем сообщение с кнопкой "отмена"
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    if not server_id or not edit_field:
+        await state.clear()
+        await message.answer("❌ Ошибка: данные не найдены")
+        return
+    
+    value = message.text.strip()
+    
+    async with async_session() as session:
+        server = await WireGuardMultiService.get_server_by_id(session, server_id)
+        if not server:
+            await state.clear()
+            await message.answer("❌ Сервер не найден")
+            return
+        
+        if edit_field == "name":
+            server.name = value
+            result_text = f"✅ Имя изменено на: {value}"
+        elif edit_field == "max_clients":
+            try:
+                server.max_clients = int(value)
+                result_text = f"✅ Макс. клиентов изменено на: {value}"
+            except ValueError:
+                await message.answer(
+                    "❌ Введите число",
+                    reply_markup=get_server_edit_cancel_kb(server_id)
+                )
+                return
+        elif edit_field == "priority":
+            try:
+                server.priority = int(value)
+                result_text = f"✅ Приоритет изменён на: {value}"
+            except ValueError:
+                await message.answer(
+                    "❌ Введите число",
+                    reply_markup=get_server_edit_cancel_kb(server_id)
+                )
+                return
+        else:
+            await state.clear()
+            await message.answer("❌ Неизвестное поле")
+            return
+        
+        await session.commit()
+        
+        client_count = await WireGuardMultiService.get_server_client_count(session, server_id)
+    
+    await state.clear()
+    
+    status = "🟢 Активен" if server.is_active else "🔴 Отключен"
+    await message.answer(
+        f"{result_text}\n\n"
+        f"🖥 *{server.name}*\n\n"
+        f"*Хост:* `{server.host}`\n"
+        f"*Пароль:* `{server.ssh_password}`\n"
+        f"*Статус:* {status}\n"
+        f"*Клиентов:* {client_count}/{server.max_clients}\n"
+        f"*Приоритет:* {server.priority}",
+        parse_mode="Markdown",
+        reply_markup=get_server_detail_kb(server_id, server.is_active)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_server_clients_") & ~F.data.contains("page"))
+async def admin_server_clients(callback: CallbackQuery):
+    """Показать клиентов сервера"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    server_id = int(callback.data.split("_")[-1])
+    await callback.answer()
+    
+    async with async_session() as session:
+        server = await WireGuardMultiService.get_server_by_id(session, server_id)
+        if not server:
+            await callback.message.edit_text("❌ Сервер не найден")
+            return
+        
+        # Получаем пользователей с конфигами на этом сервере
+        stmt = select(User).join(Config).where(Config.server_id == server_id).distinct()
+        result = await session.execute(stmt)
+        users = list(result.scalars().all())
+    
+    if not users:
+        await callback.message.edit_text(
+            f"👥 *Клиенты сервера {server.name}*\n\n"
+            f"На этом сервере пока нет клиентов.",
+            parse_mode="Markdown",
+            reply_markup=get_server_detail_kb(server_id, server.is_active)
+        )
+        return
+    
+    await callback.message.edit_text(
+        f"👥 *Клиенты сервера {server.name} ({len(users)}):*",
+        parse_mode="Markdown",
+        reply_markup=get_server_clients_kb(users, server_id)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_server_clients_page_"))
+async def admin_server_clients_page(callback: CallbackQuery):
+    """Пагинация списка клиентов сервера"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    # Формат: admin_server_clients_page_{server_id}_{page}
+    parts = callback.data.split("_")
+    server_id = int(parts[-2])
+    page = int(parts[-1])
+    await callback.answer()
+    
+    async with async_session() as session:
+        server = await WireGuardMultiService.get_server_by_id(session, server_id)
+        if not server:
+            return
+        
+        stmt = select(User).join(Config).where(Config.server_id == server_id).distinct()
+        result = await session.execute(stmt)
+        users = list(result.scalars().all())
+    
+    await callback.message.edit_text(
+        f"👥 *Клиенты сервера {server.name} ({len(users)}):*",
+        parse_mode="Markdown",
+        reply_markup=get_server_clients_kb(users, server_id, page)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_server_broadcast_"))
+async def admin_server_broadcast(callback: CallbackQuery, state: FSMContext):
+    """Начать рассылку клиентам сервера"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    server_id = int(callback.data.split("_")[-1])
+    await callback.answer()
+    
+    async with async_session() as session:
+        server = await WireGuardMultiService.get_server_by_id(session, server_id)
+        if not server:
+            await callback.message.edit_text("❌ Сервер не найден")
+            return
+        
+        # Считаем клиентов
+        stmt = select(User).join(Config).where(Config.server_id == server_id).distinct()
+        result = await session.execute(stmt)
+        users = list(result.scalars().all())
+        client_count = len(users)
+    
+    if client_count == 0:
+        await callback.message.edit_text(
+            f"❌ На сервере *{server.name}* нет клиентов для рассылки.",
+            parse_mode="Markdown",
+            reply_markup=get_server_detail_kb(server_id, server.is_active)
+        )
+        return
+    
+    await state.set_state(AdminStates.waiting_for_broadcast_server)
+    await state.update_data(
+        broadcast_server_id=server_id, 
+        broadcast_server_name=server.name,
+        broadcast_prompt_msg_id=callback.message.message_id
+    )
+    
+    await callback.message.edit_text(
+        f"✉️ *Рассылка клиентам сервера {server.name}*\n\n"
+        f"👥 Получателей: {client_count}\n\n"
+        f"Отправьте сообщение для рассылки.\n"
+        f"Поддерживается:\n"
+        f"• Текст\n"
+        f"• Фото\n"
+        f"• Видео\n"
+        f"• Документ\n"
+        f"• Голосовое\n"
+        f"• Кружок (видеосообщение)",
+        parse_mode="Markdown",
+        reply_markup=get_server_broadcast_cancel_kb(server_id)
+    )
+
+
+@router.message(AdminStates.waiting_for_broadcast_server)
+async def process_broadcast_server(message: Message, state: FSMContext, bot: Bot):
+    """Обработка рассылки клиентам сервера"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    data = await state.get_data()
+    server_id = data.get("broadcast_server_id")
+    server_name = data.get("broadcast_server_name")
+    prompt_msg_id = data.get("broadcast_prompt_msg_id")
+    
+    if not server_id:
+        await state.clear()
+        await message.answer("❌ Ошибка: данные сервера не найдены")
+        return
+    
+    # Удаляем сообщение с кнопкой "отмена"
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    # Получаем telegram_id всех клиентов сервера
+    async with async_session() as session:
+        stmt = select(User.telegram_id).join(Config).where(Config.server_id == server_id).distinct()
+        result = await session.execute(stmt)
+        user_ids = [row[0] for row in result.all()]
+    
+    if not user_ids:
+        await state.clear()
+        await message.answer(
+            f"❌ На сервере *{server_name}* нет клиентов.",
+            parse_mode="Markdown",
+            reply_markup=get_server_detail_kb(server_id, True)
+        )
+        return
+    
+    await state.clear()
+    
+    success = 0
+    failed = 0
+    
+    status_msg = await message.answer(f"⏳ Отправляю сообщение {len(user_ids)} клиентам...")
+    
+    for user_telegram_id in user_ids:
+        try:
+            if message.text:
+                await bot.send_message(user_telegram_id, message.text)
+            elif message.photo:
+                await bot.send_photo(user_telegram_id, message.photo[-1].file_id, caption=message.caption)
+            elif message.video:
+                await bot.send_video(user_telegram_id, message.video.file_id, caption=message.caption)
+            elif message.document:
+                await bot.send_document(user_telegram_id, message.document.file_id, caption=message.caption)
+            elif message.voice:
+                await bot.send_voice(user_telegram_id, message.voice.file_id, caption=message.caption)
+            elif message.video_note:
+                await bot.send_video_note(user_telegram_id, message.video_note.file_id)
+            success += 1
+        except Exception as e:
+            logger.error(f"Ошибка отправки пользователю {user_telegram_id}: {e}")
+            failed += 1
+    
+    try:
+        await status_msg.delete()
+    except:
+        pass
+    
+    await message.answer(
+        f"✅ *Рассылка по серверу {server_name} завершена!*\n\n"
+        f"📨 Отправлено: {success}\n"
+        f"❌ Ошибок: {failed}",
+        parse_mode="Markdown",
+        reply_markup=get_server_detail_kb(server_id, True)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_srvuser_"))
+async def admin_server_user_detail(callback: CallbackQuery):
+    """Детальная информация о пользователе (из списка клиентов сервера)"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    # Формат: admin_srvuser_{server_id}_{user_id}
+    parts = callback.data.split("_")
+    server_id = int(parts[2])
+    user_id = int(parts[3])
+    await callback.answer()
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.id == user_id).options(
+            selectinload(User.configs),
+            selectinload(User.subscriptions)
+        )
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await callback.message.edit_text("❌ Пользователь не найден")
+            return
+        
+        # Считаем активную подписку
+        active_sub = None
+        if user.subscriptions:
+            for sub in user.subscriptions:
+                if sub.expires_at and sub.expires_at > datetime.utcnow():
+                    active_sub = sub
+                    break
+        
+        configs_count = len(user.configs) if user.configs else 0
+        
+        # Формируем текст
+        name = f"@{user.username}" if user.username else user.full_name
+        phone_info = f"📞 {user.phone}" if user.phone and user.phone != "5553535" else "📞 не указан"
+        
+        if active_sub:
+            days_left = (active_sub.expires_at - datetime.utcnow()).days
+            sub_info = f"✅ Активна ({days_left} дн.)"
+        else:
+            sub_info = "❌ Нет подписки"
+        
+        text = (
+            f"👤 *{name}*\n\n"
+            f"🆔 ID: `{user.telegram_id}`\n"
+            f"{phone_info}\n"
+            f"📱 Конфигов: {configs_count}\n"
+            f"📊 Подписка: {sub_info}\n"
+            f"📅 Регистрация: {user.created_at.strftime('%d.%m.%Y')}"
+        )
+        
+        await callback.message.edit_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=get_server_user_detail_kb(user_id, server_id)
+        )
+
+
+# ===== РЕФЕРАЛЫ =====
+
+@router.callback_query(F.data == "admin_referrals")
+async def admin_referrals(callback: CallbackQuery):
+    """Список пользователей с рефералами"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    await callback.answer()
+    
+    async with async_session() as session:
+        # Получаем пользователей у которых есть рефералы
+        stmt = select(User).options(selectinload(User.referrals)).order_by(User.referral_balance.desc())
+        result = await session.execute(stmt)
+        all_users = result.scalars().all()
+        
+        # Фильтруем только тех у кого есть рефералы или баланс
+        users_with_referrals = [u for u in all_users if (u.referrals and len(u.referrals) > 0) or u.referral_balance > 0]
+    
+    if not users_with_referrals:
+        await callback.message.edit_text(
+            "📭 Пока нет пользователей с рефералами",
+            reply_markup=get_admin_menu_kb()
+        )
+        return
+    
+    await callback.message.edit_text(
+        f"👥 *Рефералы ({len(users_with_referrals)}):*\n\n"
+        f"Пользователи с приглашёнными друзьями:",
+        parse_mode="Markdown",
+        reply_markup=get_referrals_list_kb(users_with_referrals)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_referrals_page_"))
+async def admin_referrals_page(callback: CallbackQuery):
+    """Пагинация списка рефералов"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    page = int(callback.data.replace("admin_referrals_page_", ""))
+    
+    async with async_session() as session:
+        stmt = select(User).options(selectinload(User.referrals)).order_by(User.referral_balance.desc())
+        result = await session.execute(stmt)
+        all_users = result.scalars().all()
+        users_with_referrals = [u for u in all_users if (u.referrals and len(u.referrals) > 0) or u.referral_balance > 0]
+    
+    await callback.message.edit_reply_markup(
+        reply_markup=get_referrals_list_kb(users_with_referrals, page)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_referral_") & ~F.data.contains("percent"))
+async def admin_referral_detail(callback: CallbackQuery):
+    """Детальная информация о реферале"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    user_id = int(callback.data.replace("admin_referral_", ""))
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.id == user_id).options(
+            selectinload(User.referrals).selectinload(User.payments)
+        )
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        
+        referral_count = len(user.referrals) if user.referrals else 0
+        
+        # Сумма оплат рефералов
+        total_payments = 0
+        for ref in (user.referrals or []):
+            for payment in (ref.payments or []):
+                if payment.status == "approved":
+                    total_payments += payment.amount
+        
+        username = f"@{user.username}" if user.username else user.full_name
+        
+        await callback.message.edit_text(
+            f"👤 *Реферал: {username}*\n\n"
+            f"🆔 ID: `{user.telegram_id}`\n"
+            f"👥 Приглашено: {referral_count} чел.\n"
+            f"💰 Оплаты рефералов: {int(total_payments)}₽\n"
+            f"📊 Процент: {int(user.referral_percent)}%\n"
+            f"💵 Накоплено: {int(user.referral_balance)}₽",
+            parse_mode="Markdown",
+            reply_markup=get_referral_detail_kb(user_id)
+        )
+
+
+@router.callback_query(F.data.startswith("admin_referral_percent_"))
+async def admin_referral_percent(callback: CallbackQuery, state: FSMContext):
+    """Изменение процента реферала"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    user_id = int(callback.data.replace("admin_referral_percent_", ""))
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.id == user_id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        
+        current_percent = user.referral_percent
+    
+    await state.set_state(AdminStates.waiting_for_referral_percent)
+    await state.update_data(user_id=user_id, prompt_msg_id=callback.message.message_id)
+    
+    await callback.message.edit_text(
+        f"📊 *Изменение процента*\n\n"
+        f"Текущий процент: {int(current_percent)}%\n\n"
+        f"Введи новый процент (от 1 до 100):",
+        parse_mode="Markdown",
+        reply_markup=get_referral_percent_cancel_kb(user_id)
+    )
+
+
+@router.message(AdminStates.waiting_for_referral_percent)
+async def process_referral_percent(message: Message, state: FSMContext, bot: Bot):
+    """Обработка ввода процента реферала"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    data = await state.get_data()
+    user_id = data.get("user_id")
+    prompt_msg_id = data.get("prompt_msg_id")
+    
+    if not user_id:
+        await state.clear()
+        await message.answer("❌ Ошибка: данные не найдены")
+        return
+    
+    try:
+        percent = float(message.text.strip().replace(",", "."))
+        if percent < 1 or percent > 100:
+            raise ValueError()
+    except ValueError:
+        await message.answer(
+            "❌ Введи число от 1 до 100",
+            reply_markup=get_referral_percent_cancel_kb(user_id)
+        )
+        return
+    
+    # Удаляем сообщение с кнопкой "отмена"
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.id == user_id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await state.clear()
+            await message.answer("❌ Пользователь не найден")
+            return
+        
+        user.referral_percent = percent
+        await session.commit()
+    
+    await state.clear()
+    
+    await message.answer(
+        f"✅ Процент установлен: {int(percent)}%",
+        reply_markup=get_referral_detail_kb(user_id)
+    )
+
+
+# ===== ЗАЯВКИ НА ВЫВОД =====
+
+@router.callback_query(F.data == "admin_withdrawals")
+async def admin_withdrawals(callback: CallbackQuery):
+    """Список заявок на вывод"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    await callback.answer()
+    
+    async with async_session() as session:
+        stmt = select(WithdrawalRequest).where(WithdrawalRequest.status == "pending").options(
+            selectinload(WithdrawalRequest.user)
+        ).order_by(WithdrawalRequest.created_at.desc())
+        result = await session.execute(stmt)
+        withdrawals = result.scalars().all()
+    
+    if not withdrawals:
+        await callback.message.edit_text(
+            "✅ Нет заявок на вывод",
+            reply_markup=get_admin_menu_kb()
+        )
+        return
+    
+    await callback.message.edit_text(
+        f"💸 *Заявки на вывод ({len(withdrawals)}):*",
+        parse_mode="Markdown",
+        reply_markup=get_withdrawals_list_kb(withdrawals)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_withdrawal_") & ~F.data.contains("complete") & ~F.data.contains("cancel"))
+async def admin_withdrawal_detail(callback: CallbackQuery):
+    """Детальная информация о заявке на вывод"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    withdrawal_id = int(callback.data.replace("admin_withdrawal_", ""))
+    
+    async with async_session() as session:
+        stmt = select(WithdrawalRequest).where(WithdrawalRequest.id == withdrawal_id).options(
+            selectinload(WithdrawalRequest.user)
+        )
+        result = await session.execute(stmt)
+        withdrawal = result.scalar_one_or_none()
+        
+        if not withdrawal:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
+        
+        user = withdrawal.user
+        username = f"@{user.username}" if user.username else user.full_name
+        
+        await callback.message.edit_text(
+            f"💸 *Заявка на вывод #{withdrawal.id}*\n\n"
+            f"👤 Пользователь: {username}\n"
+            f"🆔 ID: `{user.telegram_id}`\n"
+            f"💰 Сумма: {int(withdrawal.amount)}₽\n"
+            f"🏦 Банк: {withdrawal.bank}\n"
+            f"📱 Телефон: `{withdrawal.phone}`\n"
+            f"📅 Дата: {withdrawal.created_at.strftime('%d.%m.%Y %H:%M')}",
+            parse_mode="Markdown",
+            reply_markup=get_withdrawal_review_kb(withdrawal_id)
+        )
+
+
+@router.callback_query(F.data.startswith("admin_withdrawal_complete_"))
+async def admin_withdrawal_complete(callback: CallbackQuery, bot: Bot):
+    """Подтверждение вывода средств"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    withdrawal_id = int(callback.data.replace("admin_withdrawal_complete_", ""))
+    
+    async with async_session() as session:
+        stmt = select(WithdrawalRequest).where(WithdrawalRequest.id == withdrawal_id).options(
+            selectinload(WithdrawalRequest.user)
+        )
+        result = await session.execute(stmt)
+        withdrawal = result.scalar_one_or_none()
+        
+        if not withdrawal:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
+        
+        if withdrawal.status != "pending":
+            await callback.answer("Заявка уже обработана", show_alert=True)
+            return
+        
+        user_telegram_id = withdrawal.user.telegram_id
+        amount = withdrawal.amount
+        
+        withdrawal.status = "completed"
+        withdrawal.processed_at = datetime.utcnow()
+        await session.commit()
+    
+    await callback.answer("✅ Вывод подтверждён")
+    
+    try:
+        await callback.message.edit_text(
+            callback.message.text + "\n\n✅ *ВЫПОЛНЕНО*",
+            parse_mode="Markdown"
+        )
+    except:
+        pass
+    
+    # Уведомляем пользователя
+    try:
+        await bot.send_message(
+            user_telegram_id,
+            f"✅ *Вывод средств выполнен!*\n\n"
+            f"💰 Сумма: {int(amount)}₽\n\n"
+            f"Спасибо за участие в реферальной программе! 🎉",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка уведомления о выводе: {e}")
+
+
+@router.callback_query(F.data.startswith("admin_withdrawal_cancel_"))
+async def admin_withdrawal_cancel(callback: CallbackQuery, bot: Bot):
+    """Отмена вывода средств"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    withdrawal_id = int(callback.data.replace("admin_withdrawal_cancel_", ""))
+    
+    async with async_session() as session:
+        stmt = select(WithdrawalRequest).where(WithdrawalRequest.id == withdrawal_id).options(
+            selectinload(WithdrawalRequest.user)
+        )
+        result = await session.execute(stmt)
+        withdrawal = result.scalar_one_or_none()
+        
+        if not withdrawal:
+            await callback.answer("Заявка не найдена", show_alert=True)
+            return
+        
+        if withdrawal.status != "pending":
+            await callback.answer("Заявка уже обработана", show_alert=True)
+            return
+        
+        user_telegram_id = withdrawal.user.telegram_id
+        user_id = withdrawal.user.id
+        amount = withdrawal.amount
+        
+        # Возвращаем средства на баланс
+        stmt_user = select(User).where(User.id == user_id)
+        result_user = await session.execute(stmt_user)
+        user = result_user.scalar_one_or_none()
+        if user:
+            user.referral_balance += amount
+        
+        withdrawal.status = "cancelled"
+        withdrawal.processed_at = datetime.utcnow()
+        await session.commit()
+    
+    await callback.answer("❌ Вывод отменён")
+    
+    try:
+        await callback.message.edit_text(
+            callback.message.text + "\n\n❌ *ОТМЕНЕНО*",
+            parse_mode="Markdown"
+        )
+    except:
+        pass
+    
+    # Уведомляем пользователя
+    try:
+        await bot.send_message(
+            user_telegram_id,
+            f"❌ *Вывод средств отменён*\n\n"
+            f"Произошла ошибка при выводе.\n"
+            f"Средства возвращены на баланс.\n\n"
+            f"Свяжитесь с @agdelesha для уточнения.",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка уведомления об отмене вывода: {e}")
+
+
+# ===== УПРАВЛЕНИЕ БОТАМИ =====
+
+@router.callback_query(F.data == "settings_bots")
+async def settings_bots(callback: CallbackQuery):
+    """Список ботов"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    from services.settings import get_all_bots
+    from keyboards.admin_kb import get_bots_list_kb
+    
+    bots = await get_all_bots()
+    
+    await callback.message.edit_text(
+        f"🤖 *Управление ботами*\n\n"
+        f"Всего ботов: {len(bots)}\n\n"
+        f"Выберите бота для настройки или добавьте нового:",
+        parse_mode="Markdown",
+        reply_markup=get_bots_list_kb(bots)
+    )
+
+
+@router.callback_query(F.data.startswith("bot_settings_"))
+async def bot_settings_detail(callback: CallbackQuery):
+    """Настройки конкретного бота"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    bot_id = int(callback.data.replace("bot_settings_", ""))
+    
+    from services.settings import get_bot_instance
+    from keyboards.admin_kb import get_bot_settings_kb
+    
+    bot = await get_bot_instance(bot_id)
+    if not bot:
+        await callback.answer("Бот не найден", show_alert=True)
+        return
+    
+    pwd_text = f"`{bot.password}`" if bot.password else "не установлен"
+    channel_text = f"@{bot.channel}" if bot.channel else "не установлен"
+    phone_text = "Да" if bot.require_phone else "Нет"
+    
+    await callback.message.edit_text(
+        f"🤖 *Настройки бота @{bot.username}*\n\n"
+        f"🔑 Пароль: {pwd_text}\n"
+        f"📢 Канал: {channel_text}\n"
+        f"📱 Запрос телефона: {phone_text}\n"
+        f"📋 Макс. конфигов: {bot.max_configs}\n"
+        f"Статус: {'🟢 Активен' if bot.is_active else '🔴 Отключен'}",
+        parse_mode="Markdown",
+        reply_markup=get_bot_settings_kb(bot_id, bot)
+    )
+
+
+@router.callback_query(F.data == "bot_add")
+async def bot_add(callback: CallbackQuery, state: FSMContext):
+    """Добавить нового бота"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    from keyboards.admin_kb import get_bot_add_cancel_kb
+    
+    msg = await callback.message.edit_text(
+        "🤖 *Добавление нового бота*\n\n"
+        "Отправьте токен бота (получите у @BotFather):",
+        parse_mode="Markdown",
+        reply_markup=get_bot_add_cancel_kb()
+    )
+    
+    await state.set_state(AdminStates.waiting_for_bot_token)
+    await state.update_data(prompt_msg_id=msg.message_id)
+
+
+@router.message(AdminStates.waiting_for_bot_token)
+async def process_bot_token(message: Message, state: FSMContext):
+    """Обработка токена нового бота"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    token = message.text.strip()
+    
+    # Удаляем сообщение пользователя
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    # Удаляем промпт
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    if prompt_msg_id:
+        try:
+            await message.bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    # Проверяем токен
+    try:
+        from aiogram import Bot
+        test_bot = Bot(token=token)
+        bot_info = await test_bot.get_me()
+        await test_bot.session.close()
+        
+        # Проверяем, не добавлен ли уже
+        from services.settings import get_bot_instance, add_bot_instance
+        existing = await get_bot_instance(bot_info.id)
+        if existing:
+            await message.answer(
+                f"❌ Бот @{bot_info.username} уже добавлен!",
+                parse_mode="Markdown"
+            )
+            await state.clear()
+            return
+        
+        # Добавляем бота
+        await add_bot_instance(token, bot_info.id, bot_info.username, bot_info.first_name)
+        
+        await message.answer(
+            f"✅ *Бот добавлен!*\n\n"
+            f"@{bot_info.username}\n\n"
+            f"🔄 Перезапускаю сервис...",
+            parse_mode="Markdown"
+        )
+        
+        # Автоматически перезапускаем сервис
+        import subprocess
+        try:
+            subprocess.Popen(["systemctl", "restart", "vpn-bot"], 
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as restart_err:
+            logger.error(f"Ошибка перезапуска сервиса: {restart_err}")
+        
+    except Exception as e:
+        await message.answer(
+            f"❌ Ошибка: неверный токен\n\n{str(e)[:100]}",
+            parse_mode="Markdown"
+        )
+    
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("bot_password_"))
+async def bot_password_menu(callback: CallbackQuery, state: FSMContext):
+    """Меню пароля бота"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    action = callback.data.replace("bot_password_", "")
+    
+    if action.startswith("set_"):
+        # Установить пароль
+        bot_id = int(action.replace("set_", ""))
+        await callback.answer()
+        from keyboards.admin_kb import get_bot_input_cancel_kb
+        
+        msg = await callback.message.edit_text(
+            "🔑 Введите новый пароль для бота:",
+            parse_mode="Markdown",
+            reply_markup=get_bot_input_cancel_kb(bot_id, "settings")
+        )
+        await state.set_state(AdminStates.waiting_for_bot_password)
+        await state.update_data(bot_id=bot_id, prompt_msg_id=msg.message_id)
+        
+    elif action.startswith("remove_"):
+        # Убрать пароль
+        bot_id = int(action.replace("remove_", ""))
+        from services.settings import update_bot_setting
+        await update_bot_setting(bot_id, "password", None)
+        await callback.answer("✅ Пароль убран")
+        
+        # Возвращаемся к настройкам бота
+        from services.settings import get_bot_instance
+        from keyboards.admin_kb import get_bot_settings_kb
+        bot = await get_bot_instance(bot_id)
+        await callback.message.edit_text(
+            f"🤖 *Настройки бота @{bot.username}*\n\n"
+            f"🔑 Пароль: не установлен\n"
+            f"📢 Канал: {'@' + bot.channel if bot.channel else 'не установлен'}\n"
+            f"📱 Запрос телефона: {'Да' if bot.require_phone else 'Нет'}\n"
+            f"📋 Макс. конфигов: {bot.max_configs}",
+            parse_mode="Markdown",
+            reply_markup=get_bot_settings_kb(bot_id, bot)
+        )
+    else:
+        # Меню пароля
+        bot_id = int(action)
+        await callback.answer()
+        from services.settings import get_bot_instance
+        from keyboards.admin_kb import get_bot_password_kb
+        
+        bot = await get_bot_instance(bot_id)
+        pwd_text = f"`{bot.password}`" if bot.password else "не установлен"
+        
+        await callback.message.edit_text(
+            f"🔑 *Пароль бота @{bot.username}*\n\n"
+            f"Текущий пароль: {pwd_text}",
+            parse_mode="Markdown",
+            reply_markup=get_bot_password_kb(bot_id, bool(bot.password))
+        )
+
+
+@router.message(AdminStates.waiting_for_bot_password)
+async def process_bot_password(message: Message, state: FSMContext):
+    """Обработка нового пароля бота"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    password = message.text.strip()
+    data = await state.get_data()
+    bot_id = data.get("bot_id")
+    
+    # Удаляем сообщения
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    prompt_msg_id = data.get("prompt_msg_id")
+    if prompt_msg_id:
+        try:
+            await message.bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    from services.settings import update_bot_setting, get_bot_instance
+    from keyboards.admin_kb import get_bot_settings_kb
+    
+    await update_bot_setting(bot_id, "password", password)
+    await state.clear()
+    
+    bot = await get_bot_instance(bot_id)
+    await message.answer(
+        f"✅ Пароль установлен: `{password}`\n\n"
+        f"🤖 *Настройки бота @{bot.username}*",
+        parse_mode="Markdown",
+        reply_markup=get_bot_settings_kb(bot_id, bot)
+    )
+
+
+@router.callback_query(F.data.startswith("bot_channel_"))
+async def bot_channel_menu(callback: CallbackQuery, state: FSMContext):
+    """Меню канала бота"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    action = callback.data.replace("bot_channel_", "")
+    
+    if action.startswith("set_"):
+        bot_id = int(action.replace("set_", ""))
+        await callback.answer()
+        from keyboards.admin_kb import get_bot_input_cancel_kb
+        
+        msg = await callback.message.edit_text(
+            "📢 Введите username канала (без @):",
+            parse_mode="Markdown",
+            reply_markup=get_bot_input_cancel_kb(bot_id, "settings")
+        )
+        await state.set_state(AdminStates.waiting_for_bot_channel)
+        await state.update_data(bot_id=bot_id, prompt_msg_id=msg.message_id)
+        
+    elif action.startswith("remove_"):
+        bot_id = int(action.replace("remove_", ""))
+        from services.settings import update_bot_setting, get_bot_instance
+        from keyboards.admin_kb import get_bot_settings_kb
+        
+        await update_bot_setting(bot_id, "channel", None)
+        await callback.answer("✅ Канал убран")
+        
+        bot = await get_bot_instance(bot_id)
+        await callback.message.edit_text(
+            f"🤖 *Настройки бота @{bot.username}*",
+            parse_mode="Markdown",
+            reply_markup=get_bot_settings_kb(bot_id, bot)
+        )
+    else:
+        bot_id = int(action)
+        await callback.answer()
+        from services.settings import get_bot_instance
+        from keyboards.admin_kb import get_bot_channel_kb
+        
+        bot = await get_bot_instance(bot_id)
+        channel_text = f"@{bot.channel}" if bot.channel else "не установлен"
+        
+        await callback.message.edit_text(
+            f"📢 *Канал бота @{bot.username}*\n\n"
+            f"Текущий канал: {channel_text}",
+            parse_mode="Markdown",
+            reply_markup=get_bot_channel_kb(bot_id, bool(bot.channel))
+        )
+
+
+@router.message(AdminStates.waiting_for_bot_channel)
+async def process_bot_channel(message: Message, state: FSMContext):
+    """Обработка канала бота"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    channel = message.text.strip().replace("@", "")
+    data = await state.get_data()
+    bot_id = data.get("bot_id")
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    prompt_msg_id = data.get("prompt_msg_id")
+    if prompt_msg_id:
+        try:
+            await message.bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    from services.settings import update_bot_setting, get_bot_instance
+    from keyboards.admin_kb import get_bot_settings_kb
+    
+    await update_bot_setting(bot_id, "channel", channel)
+    await state.clear()
+    
+    bot = await get_bot_instance(bot_id)
+    await message.answer(
+        f"✅ Канал установлен: @{channel}\n\n"
+        f"🤖 *Настройки бота @{bot.username}*",
+        parse_mode="Markdown",
+        reply_markup=get_bot_settings_kb(bot_id, bot)
+    )
+
+
+@router.callback_query(F.data.startswith("bot_phone_"))
+async def bot_phone_toggle(callback: CallbackQuery):
+    """Переключение запроса телефона"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    bot_id = int(callback.data.replace("bot_phone_", ""))
+    
+    from services.settings import get_bot_instance, update_bot_setting
+    from keyboards.admin_kb import get_bot_settings_kb
+    
+    bot = await get_bot_instance(bot_id)
+    new_value = not bot.require_phone
+    await update_bot_setting(bot_id, "require_phone", new_value)
+    
+    await callback.answer(f"✅ Запрос телефона: {'Вкл' if new_value else 'Выкл'}")
+    
+    bot = await get_bot_instance(bot_id)
+    await callback.message.edit_text(
+        f"🤖 *Настройки бота @{bot.username}*\n\n"
+        f"🔑 Пароль: {'`' + bot.password + '`' if bot.password else 'не установлен'}\n"
+        f"📢 Канал: {'@' + bot.channel if bot.channel else 'не установлен'}\n"
+        f"📱 Запрос телефона: {'Да' if bot.require_phone else 'Нет'}\n"
+        f"📋 Макс. конфигов: {bot.max_configs}",
+        parse_mode="Markdown",
+        reply_markup=get_bot_settings_kb(bot_id, bot)
+    )
+
+
+@router.callback_query(F.data.startswith("bot_toggle_"))
+async def bot_toggle_active(callback: CallbackQuery):
+    """Включение/выключение бота"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    bot_id = int(callback.data.replace("bot_toggle_", ""))
+    
+    from services.settings import get_bot_instance, update_bot_setting
+    from keyboards.admin_kb import get_bot_settings_kb
+    
+    bot = await get_bot_instance(bot_id)
+    new_value = not bot.is_active
+    await update_bot_setting(bot_id, "is_active", new_value)
+    
+    await callback.answer(f"✅ Бот {'активирован' if new_value else 'отключен'}")
+    
+    bot = await get_bot_instance(bot_id)
+    await callback.message.edit_text(
+        f"🤖 *Настройки бота @{bot.username}*\n\n"
+        f"Статус: {'🟢 Активен' if bot.is_active else '🔴 Отключен'}\n\n"
+        f"⚠️ Перезапустите сервис для применения",
+        parse_mode="Markdown",
+        reply_markup=get_bot_settings_kb(bot_id, bot)
+    )
+
+
+@router.callback_query(F.data.startswith("bot_delete_"))
+async def bot_delete(callback: CallbackQuery):
+    """Удаление бота"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    action = callback.data.replace("bot_delete_", "")
+    
+    if action.startswith("confirm_"):
+        bot_id = int(action.replace("confirm_", ""))
+        from services.settings import delete_bot_instance, get_all_bots
+        from keyboards.admin_kb import get_bots_list_kb
+        
+        await delete_bot_instance(bot_id)
+        await callback.answer("✅ Бот удалён")
+        
+        bots = await get_all_bots()
+        await callback.message.edit_text(
+            f"🤖 *Управление ботами*\n\n"
+            f"Бот удалён. Всего ботов: {len(bots)}",
+            parse_mode="Markdown",
+            reply_markup=get_bots_list_kb(bots)
+        )
+    else:
+        bot_id = int(action)
+        await callback.answer()
+        from services.settings import get_bot_instance
+        from keyboards.admin_kb import get_bot_delete_confirm_kb
+        
+        bot = await get_bot_instance(bot_id)
+        await callback.message.edit_text(
+            f"🗑 *Удаление бота @{bot.username}*\n\n"
+            f"Вы уверены? Это действие нельзя отменить.",
+            parse_mode="Markdown",
+            reply_markup=get_bot_delete_confirm_kb(bot_id)
+        )
+
+
+@router.callback_query(F.data.startswith("bot_max_configs_"))
+async def bot_max_configs(callback: CallbackQuery, state: FSMContext):
+    """Изменение лимита конфигов бота"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    bot_id = int(callback.data.replace("bot_max_configs_", ""))
+    await callback.answer()
+    
+    from keyboards.admin_kb import get_bot_input_cancel_kb
+    
+    msg = await callback.message.edit_text(
+        "📋 Введите максимальное количество конфигов:",
+        parse_mode="Markdown",
+        reply_markup=get_bot_input_cancel_kb(bot_id, "settings")
+    )
+    await state.set_state(AdminStates.waiting_for_bot_max_configs)
+    await state.update_data(bot_id=bot_id, prompt_msg_id=msg.message_id)
+
+
+@router.message(AdminStates.waiting_for_bot_max_configs)
+async def process_bot_max_configs(message: Message, state: FSMContext):
+    """Обработка лимита конфигов"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    try:
+        max_configs = int(message.text.strip())
+        if max_configs < 1:
+            raise ValueError()
+    except:
+        await message.answer("❌ Введите число больше 0")
+        return
+    
+    data = await state.get_data()
+    bot_id = data.get("bot_id")
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    prompt_msg_id = data.get("prompt_msg_id")
+    if prompt_msg_id:
+        try:
+            await message.bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    from services.settings import update_bot_setting, get_bot_instance
+    from keyboards.admin_kb import get_bot_settings_kb
+    
+    await update_bot_setting(bot_id, "max_configs", max_configs)
+    await state.clear()
+    
+    bot = await get_bot_instance(bot_id)
+    await message.answer(
+        f"✅ Лимит конфигов: {max_configs}\n\n"
+        f"🤖 *Настройки бота @{bot.username}*",
+        parse_mode="Markdown",
+        reply_markup=get_bot_settings_kb(bot_id, bot)
+    )

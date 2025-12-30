@@ -18,10 +18,12 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNotFound
 import aiohttp
 
-from config import BOT_TOKEN
-from database import init_db
+from config import BOT_TOKEN, BOT_TOKEN_2
+from database import init_db, async_session, BotInstance
+from database.models import BotInstance
 from handlers import user_router, admin_router
 from services.scheduler import SchedulerService
+from sqlalchemy import select
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,6 +59,66 @@ class RetryAiohttpSession(AiohttpSession):
         raise last_error
 
 
+async def register_bot_in_db(bot: Bot):
+    """Регистрирует бота в БД если его там нет"""
+    try:
+        bot_info = await bot.get_me()
+        async with async_session() as session:
+            stmt = select(BotInstance).where(BotInstance.bot_id == bot_info.id)
+            result = await session.execute(stmt)
+            existing = result.scalar_one_or_none()
+            
+            if not existing:
+                # Получаем токен из бота
+                token = bot.token
+                new_bot = BotInstance(
+                    bot_id=bot_info.id,
+                    token=token,
+                    username=bot_info.username,
+                    name=bot_info.first_name,
+                    is_active=True
+                )
+                session.add(new_bot)
+                await session.commit()
+                logger.info(f"Бот @{bot_info.username} зарегистрирован в БД")
+            else:
+                # Обновляем username если изменился
+                if existing.username != bot_info.username:
+                    existing.username = bot_info.username
+                    await session.commit()
+    except Exception as e:
+        logger.error(f"Ошибка регистрации бота в БД: {e}")
+
+
+async def load_bots_from_db() -> list:
+    """Загружает дополнительных ботов из БД"""
+    bots = []
+    try:
+        async with async_session() as session:
+            stmt = select(BotInstance).where(BotInstance.is_active == True)
+            result = await session.execute(stmt)
+            bot_instances = result.scalars().all()
+            
+            for bi in bot_instances:
+                try:
+                    bot_session = RetryAiohttpSession(max_retries=5, retry_delay=2.0)
+                    bot = Bot(
+                        token=bi.token,
+                        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN),
+                        session=bot_session
+                    )
+                    # Проверяем что токен валидный
+                    bot_info = await bot.get_me()
+                    if bot_info.id == bi.bot_id:
+                        bots.append(bot)
+                        logger.info(f"Загружен бот из БД: @{bot_info.username}")
+                except Exception as e:
+                    logger.error(f"Ошибка загрузки бота {bi.username}: {e}")
+    except Exception as e:
+        logger.error(f"Ошибка загрузки ботов из БД: {e}")
+    return bots
+
+
 async def main():
     logger.info("Инициализация базы данных...")
     await init_db()
@@ -68,33 +130,65 @@ async def main():
     )
     logger.info("Используется сессия с retry (5 попыток)")
     
+    # Основной бот (из .env)
     bot = Bot(
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN),
         session=session
     )
     
+    # Регистрируем основной бот в БД
+    await register_bot_in_db(bot)
+    
+    # Список ботов для polling
+    bots = [bot]
+    
+    # Второй бот из .env (если токен указан)
+    if BOT_TOKEN_2:
+        session2 = RetryAiohttpSession(max_retries=5, retry_delay=2.0)
+        bot2 = Bot(
+            token=BOT_TOKEN_2,
+            default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN),
+            session=session2
+        )
+        await register_bot_in_db(bot2)
+        bots.append(bot2)
+        logger.info("Второй бот из .env подключен")
+    
+    # Загружаем дополнительных ботов из БД (добавленных через админку)
+    db_bots = await load_bots_from_db()
+    # Добавляем только тех, кого ещё нет в списке
+    existing_ids = {(await b.get_me()).id for b in bots}
+    for db_bot in db_bots:
+        db_bot_info = await db_bot.get_me()
+        if db_bot_info.id not in existing_ids:
+            bots.append(db_bot)
+            existing_ids.add(db_bot_info.id)
+    
     dp = Dispatcher()
     
-    dp.include_router(user_router)
+    # admin_router первый — чтобы FSM-состояния админки обрабатывались раньше AI-ассистента
     dp.include_router(admin_router)
+    dp.include_router(user_router)
     
+    # Планировщик работает только с основным ботом
     scheduler = SchedulerService(bot)
     scheduler.start()
     
-    logger.info("Запуск бота...")
+    logger.info(f"Запуск бота... (ботов: {len(bots)})")
     
     # Бесконечный цикл с перезапуском при критических ошибках
     while True:
         try:
-            await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+            await dp.start_polling(*bots, allowed_updates=dp.resolve_used_update_types())
             break
         except Exception as e:
             logger.error(f"Критическая ошибка polling: {e}. Перезапуск через 10с...")
             await asyncio.sleep(10)
     
     scheduler.stop()
-    await bot.session.close()
+    for b in bots:
+        await b.session.close()
 
 
 if __name__ == "__main__":

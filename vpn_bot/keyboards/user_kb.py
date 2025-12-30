@@ -13,6 +13,8 @@ def get_main_menu_kb(user_id: int = None, has_subscription: bool = False, how_to
         InlineKeyboardButton(text="📊 Подписка", callback_data="my_subscription")
     ])
     
+    buttons.append([InlineKeyboardButton(text="👥 Реферальная программа", callback_data="referral_menu")])
+    
     if not how_to_seen:
         buttons.append([InlineKeyboardButton(text="❓ а как?", callback_data="how_to")])
     
@@ -22,7 +24,7 @@ def get_main_menu_kb(user_id: int = None, has_subscription: bool = False, how_to
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_tariffs_kb(show_trial: bool = True) -> InlineKeyboardMarkup:
+def get_tariffs_kb(show_trial: bool = True, has_referral_discount: bool = False) -> InlineKeyboardMarkup:
     buttons = []
     
     if show_trial:
@@ -31,9 +33,15 @@ def get_tariffs_kb(show_trial: bool = True) -> InlineKeyboardMarkup:
             callback_data="tariff_trial"
         )])
     
-    buttons.append([InlineKeyboardButton(text="30 дней — 100₽", callback_data="tariff_30")])
-    buttons.append([InlineKeyboardButton(text="90 дней — 200₽", callback_data="tariff_90")])
-    buttons.append([InlineKeyboardButton(text="180 дней — 300₽", callback_data="tariff_180")])
+    if has_referral_discount:
+        # Показываем цены со скидкой 50%
+        buttons.append([InlineKeyboardButton(text="30 дней — 50₽ (скидка 50%)", callback_data="tariff_30")])
+        buttons.append([InlineKeyboardButton(text="90 дней — 100₽ (скидка 50%)", callback_data="tariff_90")])
+        buttons.append([InlineKeyboardButton(text="180 дней — 150₽ (скидка 50%)", callback_data="tariff_180")])
+    else:
+        buttons.append([InlineKeyboardButton(text="30 дней — 100₽", callback_data="tariff_30")])
+        buttons.append([InlineKeyboardButton(text="90 дней — 200₽", callback_data="tariff_90")])
+        buttons.append([InlineKeyboardButton(text="180 дней — 300₽", callback_data="tariff_180")])
     
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -94,21 +102,30 @@ def get_configs_kb(configs: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_config_detail_kb(config_id: int, is_active: bool) -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(text="📥 Скачать конфиг", callback_data=f"download_config_{config_id}")],
-        [InlineKeyboardButton(text="📷 QR-код", callback_data=f"qr_config_{config_id}")],
-    ]
+def get_config_detail_kb(config_id: int, is_active: bool, server_deleted: bool = False) -> InlineKeyboardMarkup:
+    buttons = []
+    if not server_deleted:
+        buttons.append([InlineKeyboardButton(text="📥 Скачать конфиг", callback_data=f"download_config_{config_id}")])
+        buttons.append([InlineKeyboardButton(text="📷 QR-код", callback_data=f"qr_config_{config_id}")])
+    buttons.append([InlineKeyboardButton(text="🗑 Удалить конфиг", callback_data=f"user_delete_config_{config_id}")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="my_configs")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_user_config_delete_confirm_kb(config_id: int) -> InlineKeyboardMarkup:
+    """Подтверждение удаления конфига пользователем"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"user_confirm_delete_config_{config_id}"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data=f"config_{config_id}")
+        ]
+    ])
 
 
 def get_welcome_kb(show_trial: bool = True) -> InlineKeyboardMarkup:
     """Клавиатура приветствия для новых пользователей без подписки"""
     buttons = []
-    if show_trial:
-        buttons.append([InlineKeyboardButton(text="🎁 Пробный доступ", callback_data="funnel_trial")])
-    buttons.append([InlineKeyboardButton(text="💳 Тарифы", callback_data="funnel_tariffs")])
+    buttons.append([InlineKeyboardButton(text="🚀 Получить доступ", callback_data="funnel_trial")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -127,13 +144,33 @@ def get_after_config_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def get_device_selection_kb() -> InlineKeyboardMarkup:
-    """Клавиатура выбора устройства для дополнительного конфига"""
+def get_device_input_cancel_kb() -> InlineKeyboardMarkup:
+    """Клавиатура отмены при вводе названия устройства"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📱 Телефон", callback_data="device_phone")],
-        [InlineKeyboardButton(text="💻 ПК", callback_data="device_pc")],
-        [InlineKeyboardButton(text="📟 Планшет", callback_data="device_tablet")],
-        [InlineKeyboardButton(text="📡 Роутер", callback_data="device_router")],
-        [InlineKeyboardButton(text="📺 Смарт ТВ", callback_data="device_tv")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="my_configs")]
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_device_input")]
+    ])
+
+
+def get_referral_menu_kb(has_balance: bool = False) -> InlineKeyboardMarkup:
+    """Клавиатура реферальной программы"""
+    buttons = [
+        [InlineKeyboardButton(text="🔗 Получить ссылку", callback_data="referral_get_link")],
+    ]
+    if has_balance:
+        buttons.append([InlineKeyboardButton(text="💸 Вывести средства", callback_data="referral_withdraw")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_referral_back_kb() -> InlineKeyboardMarkup:
+    """Кнопка назад к реферальному меню"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="referral_menu")]
+    ])
+
+
+def get_withdrawal_cancel_kb() -> InlineKeyboardMarkup:
+    """Кнопка отмены при выводе средств"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="referral_menu")]
     ])

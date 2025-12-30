@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN_2 = os.getenv("BOT_TOKEN_2", "")  # Второй токен (опционально)
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 PAYMENT_PHONE = os.getenv("PAYMENT_PHONE", "89992115019")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")

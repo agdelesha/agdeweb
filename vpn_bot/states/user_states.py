@@ -22,3 +22,20 @@ class AdminStates(StatesGroup):
     waiting_for_configs_threshold = State()
     waiting_for_broadcast_all = State()
     waiting_for_broadcast_user = State()
+    waiting_for_broadcast_server = State()
+    waiting_for_server_data = State()
+    waiting_for_server_edit = State()
+    waiting_for_channel_name = State()
+    waiting_for_max_configs = State()
+    waiting_for_user_max_configs = State()
+    waiting_for_referral_percent = State()
+    # Управление ботами
+    waiting_for_bot_token = State()
+    waiting_for_bot_password = State()
+    waiting_for_bot_channel = State()
+    waiting_for_bot_max_configs = State()
+
+
+class WithdrawalStates(StatesGroup):
+    waiting_for_bank = State()
+    waiting_for_phone = State()
