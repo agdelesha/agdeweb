@@ -301,7 +301,7 @@ def get_servers_list_kb(servers: list, client_counts: dict = None) -> InlineKeyb
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_server_detail_kb(server_id: int, is_active: bool, has_clients: bool = False) -> InlineKeyboardMarkup:
+def get_server_detail_kb(server_id: int, is_active: bool, has_clients: bool = True) -> InlineKeyboardMarkup:
     """Клавиатура детальной информации о сервере"""
     toggle_text = "🔴 Отключить" if is_active else "🟢 Включить"
     buttons = [
@@ -311,12 +311,10 @@ def get_server_detail_kb(server_id: int, is_active: bool, has_clients: bool = Fa
          InlineKeyboardButton(text="✉️ Сообщение", callback_data=f"admin_server_broadcast_{server_id}")],
         [InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"admin_server_edit_{server_id}")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data=f"admin_server_stats_{server_id}")],
+        [InlineKeyboardButton(text="🔀 Мигрировать клиентов", callback_data=f"admin_server_migrate_{server_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"admin_server_delete_{server_id}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_servers")],
     ]
-    # Кнопка миграции только если есть клиенты
-    if has_clients:
-        buttons.append([InlineKeyboardButton(text="🔀 Мигрировать клиентов", callback_data=f"admin_server_migrate_{server_id}")])
-    buttons.append([InlineKeyboardButton(text="🗑 Удалить", callback_data=f"admin_server_delete_{server_id}")])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_servers")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

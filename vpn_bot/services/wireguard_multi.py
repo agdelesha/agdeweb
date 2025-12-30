@@ -36,25 +36,43 @@ class WireGuardMultiService:
     @classmethod
     async def get_best_server(cls, session: AsyncSession) -> Optional[Server]:
         """
-        Выбрать сервер с минимальной нагрузкой.
+        Умная балансировка нагрузки.
         Алгоритм:
-        1. Только активные серверы
-        2. С количеством активных клиентов < max_clients
-        3. Сортировка по priority (desc), затем по количеству клиентов (asc)
+        1. Только активные серверы с свободными местами
+        2. Вычисляем % заполненности каждого сервера
+        3. Сортируем по: priority (desc), % заполненности (asc)
+        
+        Это обеспечивает равномерное распределение по всем серверам,
+        а не заполнение одного сервера до конца.
         """
         stmt = (
-            select(Server, func.count(Config.id).label("client_count"))
+            select(
+                Server,
+                func.count(Config.id).label("client_count"),
+                # % заполненности: clients / max_clients * 100
+                (func.count(Config.id) * 100.0 / Server.max_clients).label("fill_percent")
+            )
             .outerjoin(Config, (Config.server_id == Server.id) & (Config.is_active == True))
             .where(Server.is_active == True)
             .group_by(Server.id)
             .having(func.count(Config.id) < Server.max_clients)
-            .order_by(Server.priority.desc(), func.count(Config.id).asc())
+            .order_by(
+                Server.priority.desc(),  # Сначала высокий приоритет
+                (func.count(Config.id) * 100.0 / Server.max_clients).asc()  # Потом менее заполненные
+            )
         )
         
         result = await session.execute(stmt)
         row = result.first()
         
-        return row[0] if row else None
+        if row:
+            server = row[0]
+            client_count = row[1]
+            fill_percent = row[2] if row[2] else 0
+            logger.info(f"Выбран сервер {server.name}: {client_count}/{server.max_clients} ({fill_percent:.1f}%)")
+            return server
+        
+        return None
     
     @classmethod
     async def get_server_by_id(cls, session: AsyncSession, server_id: int) -> Optional[Server]:
