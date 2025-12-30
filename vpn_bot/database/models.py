@@ -161,3 +161,18 @@ class BotInstance(Base):
     
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ConfigQueue(Base):
+    """Очередь ожидающих конфигов (когда все серверы заполнены)"""
+    __tablename__ = "config_queue"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    config_name: Mapped[str] = mapped_column(String(100), nullable=False)  # желаемое имя конфига
+    status: Mapped[str] = mapped_column(String(20), default="waiting")  # waiting, processing, completed, cancelled
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    
+    # Связь с пользователем
+    user: Mapped["User"] = relationship("User", backref="queue_items")

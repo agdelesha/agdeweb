@@ -1,13 +1,15 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
-def get_admin_menu_kb(pending_count: int = 0, pending_withdrawals: int = 0) -> InlineKeyboardMarkup:
+def get_admin_menu_kb(pending_count: int = 0, pending_withdrawals: int = 0, queue_count: int = 0) -> InlineKeyboardMarkup:
     pending_badge = f" ({pending_count})" if pending_count > 0 else ""
     withdrawal_badge = f" ({pending_withdrawals})" if pending_withdrawals > 0 else ""
+    queue_badge = f" ({queue_count})" if queue_count > 0 else ""
     buttons = [
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users")],
         [InlineKeyboardButton(text=f"💰 Ожидают оплаты{pending_badge}", callback_data="admin_pending_payments")],
         [InlineKeyboardButton(text=f"💸 Заявки на вывод{withdrawal_badge}", callback_data="admin_withdrawals")],
+        [InlineKeyboardButton(text=f"⏳ Очередь конфигов{queue_badge}", callback_data="admin_config_queue")],
         [InlineKeyboardButton(text="👥 Рефералы", callback_data="admin_referrals")],
         [InlineKeyboardButton(text="🖥 Серверы", callback_data="admin_servers")],
         [InlineKeyboardButton(text="🤖 Боты", callback_data="settings_bots")],

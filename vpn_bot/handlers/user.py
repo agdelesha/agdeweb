@@ -149,11 +149,15 @@ def get_phone_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-async def create_config_multi(config_name: str, user_id: int) -> tuple:
+async def create_config_multi(config_name: str, user_id: int, bot=None, user_telegram_id: int = None, username: str = None) -> tuple:
     """
     Создать конфиг с использованием мультисервера.
     Возвращает (success, config_data, server_id, error_msg)
+    
+    Если все серверы заполнены и bot передан - добавляет пользователя в очередь.
     """
+    from services.config_queue import ConfigQueueService
+    
     async with async_session() as session:
         # Проверяем есть ли серверы в БД
         servers = await WireGuardMultiService.get_all_servers(session)
@@ -168,6 +172,19 @@ async def create_config_multi(config_name: str, user_id: int) -> tuple:
         
         if success and config_data:
             return True, config_data, config_data.server_id, msg
+        
+        # Если не удалось создать из-за нехватки серверов - добавляем в очередь
+        if "Нет доступных серверов" in msg and bot and user_telegram_id:
+            # Проверяем не в очереди ли уже
+            already_in_queue = await ConfigQueueService.is_user_in_queue(user_id)
+            if not already_in_queue:
+                await ConfigQueueService.add_to_queue(user_id, config_name)
+                await ConfigQueueService.notify_admin_no_servers(bot, user_telegram_id, username)
+                return False, None, None, "QUEUE_ADDED"
+            else:
+                position = await ConfigQueueService.get_user_queue_position(user_id)
+                return False, None, None, f"ALREADY_IN_QUEUE:{position}"
+        
         return False, None, None, msg
 
 
@@ -799,9 +816,40 @@ async def funnel_get_config(callback: CallbackQuery, bot: Bot):
     username = callback.from_user.username or f"user{callback.from_user.id}"
     config_name = username
     
-    success, config_data, server_id, error_msg = await create_config_multi(config_name, callback.from_user.id)
+    # Получаем user_id из БД
+    db_user_id = None
+    async with async_session() as session:
+        stmt = select(User).where(User.telegram_id == callback.from_user.id)
+        result = await session.execute(stmt)
+        db_user = result.scalar_one_or_none()
+        if db_user:
+            db_user_id = db_user.id
+    
+    success, config_data, server_id, error_msg = await create_config_multi(
+        config_name, db_user_id, bot, callback.from_user.id, callback.from_user.username
+    )
     
     if not success:
+        # Проверяем добавлен ли в очередь
+        if error_msg == "QUEUE_ADDED":
+            await callback.message.edit_text(
+                "⏳ *Все серверы сейчас заняты*\n\n"
+                "Ты добавлен в очередь ожидания.\n"
+                "Как только появится свободное место — конфиг придёт автоматически!\n\n"
+                "Обычно это занимает не более 24 часов.",
+                parse_mode="Markdown"
+            )
+            return
+        elif error_msg.startswith("ALREADY_IN_QUEUE:"):
+            position = error_msg.split(":")[1]
+            await callback.message.edit_text(
+                f"⏳ *Ты уже в очереди*\n\n"
+                f"Твоя позиция: *{position}*\n"
+                f"Как только появится свободное место — конфиг придёт автоматически!",
+                parse_mode="Markdown"
+            )
+            return
+        
         await callback.message.edit_text(
             f"❌ Ошибка создания конфига: {error_msg}\n\n"
             "Напиши @agdelesha для помощи.",

@@ -86,6 +86,8 @@ async def cmd_admin(message: Message):
         await message.answer("❌ У тебя нет доступа к админ-панели")
         return
     
+    from services.config_queue import ConfigQueueService
+    
     async with async_session() as session:
         stmt = select(func.count()).select_from(Payment).where(Payment.status == "pending")
         result = await session.execute(stmt)
@@ -95,10 +97,12 @@ async def cmd_admin(message: Message):
         result_w = await session.execute(stmt_w)
         pending_withdrawals = result_w.scalar()
     
+    queue_count = await ConfigQueueService.get_waiting_count()
+    
     await message.answer(
         "🔧 *Админ-панель*\n\nВыбери действие:",
         parse_mode="Markdown",
-        reply_markup=get_admin_menu_kb(pending_count, pending_withdrawals)
+        reply_markup=get_admin_menu_kb(pending_count, pending_withdrawals, queue_count)
     )
 
 
@@ -107,6 +111,8 @@ async def admin_menu(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
+    
+    from services.config_queue import ConfigQueueService
     
     await callback.answer()
     async with async_session() as session:
@@ -118,10 +124,88 @@ async def admin_menu(callback: CallbackQuery):
         result_w = await session.execute(stmt_w)
         pending_withdrawals = result_w.scalar()
     
+    queue_count = await ConfigQueueService.get_waiting_count()
+    
     await callback.message.edit_text(
         "🔧 *Админ-панель*\n\nВыбери действие:",
         parse_mode="Markdown",
-        reply_markup=get_admin_menu_kb(pending_count, pending_withdrawals)
+        reply_markup=get_admin_menu_kb(pending_count, pending_withdrawals, queue_count)
+    )
+
+
+@router.callback_query(F.data == "admin_config_queue")
+async def admin_config_queue(callback: CallbackQuery, bot: Bot):
+    """Просмотр очереди ожидающих конфигов"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    from services.config_queue import ConfigQueueService
+    from utils import format_datetime_moscow
+    
+    await callback.answer()
+    
+    queue = await ConfigQueueService.get_waiting_queue()
+    
+    if not queue:
+        await callback.message.edit_text(
+            "⏳ *Очередь конфигов*\n\n"
+            "Очередь пуста — все пользователи получили свои конфиги!",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")]
+            ])
+        )
+        return
+    
+    text = f"⏳ *Очередь конфигов ({len(queue)})*\n\n"
+    
+    for i, item in enumerate(queue[:20], 1):  # Показываем первые 20
+        user = item.user
+        user_info = f"@{user.username}" if user and user.username else f"ID:{user.telegram_id}" if user else "?"
+        created = format_datetime_moscow(item.created_at)
+        text += f"{i}. {user_info} — `{item.config_name}`\n   📅 {created}\n"
+    
+    if len(queue) > 20:
+        text += f"\n... и ещё {len(queue) - 20} в очереди"
+    
+    buttons = [
+        [InlineKeyboardButton(text="🔄 Обработать очередь", callback_data="admin_process_queue")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")]
+    ]
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+
+
+@router.callback_query(F.data == "admin_process_queue")
+async def admin_process_queue(callback: CallbackQuery, bot: Bot):
+    """Принудительная обработка очереди"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    from services.config_queue import ConfigQueueService
+    
+    await callback.answer("⏳ Обрабатываю очередь...")
+    
+    processed, errors = await ConfigQueueService.process_queue(bot)
+    remaining = await ConfigQueueService.get_waiting_count()
+    
+    await callback.message.edit_text(
+        f"✅ *Очередь обработана*\n\n"
+        f"Выдано конфигов: {processed}\n"
+        f"Ошибок: {errors}\n"
+        f"Осталось в очереди: {remaining}\n\n"
+        f"{'⚠️ Нужно добавить сервер!' if remaining > 0 else '🎉 Все получили конфиги!'}",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⏳ Очередь", callback_data="admin_config_queue")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")]
+        ])
     )
 
 
@@ -2704,7 +2788,7 @@ async def admin_server_check(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("admin_server_toggle_"))
-async def admin_server_toggle(callback: CallbackQuery):
+async def admin_server_toggle(callback: CallbackQuery, bot: Bot):
     """Включение/отключение сервера"""
     if not is_admin(callback.from_user.id):
         await callback.answer("❌ Нет доступа", show_alert=True)
@@ -2718,6 +2802,7 @@ async def admin_server_toggle(callback: CallbackQuery):
             await callback.answer("❌ Сервер не найден", show_alert=True)
             return
         
+        was_inactive = not server.is_active
         server.is_active = not server.is_active
         await session.commit()
         
@@ -2725,6 +2810,11 @@ async def admin_server_toggle(callback: CallbackQuery):
         await callback.answer(f"✅ Сервер {status}")
         
         client_count = await WireGuardMultiService.get_server_client_count(session, server_id)
+    
+    # Если сервер был включен - обрабатываем очередь
+    if was_inactive and server.is_active:
+        from services.config_queue import check_and_process_queue
+        await check_and_process_queue(bot)
     
     status_text = "🟢 Активен" if server.is_active else "🔴 Отключен"
     
@@ -2945,7 +3035,7 @@ async def admin_server_cleanup(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("admin_server_install_"))
-async def admin_server_install(callback: CallbackQuery):
+async def admin_server_install(callback: CallbackQuery, bot: Bot):
     """Установка WireGuard на сервер"""
     if not is_admin(callback.from_user.id):
         await callback.answer("❌ Нет доступа", show_alert=True)
@@ -3006,6 +3096,10 @@ async def admin_server_install(callback: CallbackQuery):
             # Активируем сервер
             server.is_active = True
             await session.commit()
+            
+            # Обрабатываем очередь ожидающих
+            from services.config_queue import check_and_process_queue
+            await check_and_process_queue(bot)
             
             await callback.message.edit_text(
                 f"✅ *WireGuard успешно установлен!*\n\n"
