@@ -3705,11 +3705,13 @@ async def admin_migrate_confirm(callback: CallbackQuery, bot: Bot):
                             parse_mode="Markdown"
                         )
                         
-                        # Отправляем новый конфиг
-                        from services.wireguard_multi import send_config_file
+                        # Отправляем новый конфиг с клавиатурой "а как"
+                        from handlers.user import send_config_file
+                        from keyboards.user_kb import get_after_config_kb
                         await send_config_file(
                             bot, user.telegram_id, config_name, new_config_data, target_id,
-                            caption="📄 Твой новый WireGuard конфиг"
+                            caption="📄 Твой новый WireGuard конфиг",
+                            reply_markup=get_after_config_kb()
                         )
                         notified += 1
                     except Exception as e:
@@ -3773,14 +3775,21 @@ async def admin_server_user_detail(callback: CallbackQuery):
         
         # Считаем оставшиеся дни из подписок
         days_left = 0
+        is_unlimited = False
         if user.subscriptions:
             for sub in user.subscriptions:
-                if sub.expires_at and sub.expires_at > datetime.utcnow():
+                if sub.expires_at is None:
+                    # Бессрочная подписка
+                    is_unlimited = True
+                    break
+                elif sub.expires_at > datetime.utcnow():
                     sub_days = (sub.expires_at - datetime.utcnow()).days
                     if sub_days > days_left:
                         days_left = sub_days
         
-        if days_left > 0:
+        if is_unlimited:
+            days_info = "♾ Бессрочная"
+        elif days_left > 0:
             days_info = f"✅ {days_left} дн."
         else:
             days_info = "❌ 0 дн."
