@@ -326,9 +326,11 @@ class WireGuardMultiService:
             return True, "Конфиг включен (LOCAL_MODE)"
         
         # Создаём временный файл с preshared key и используем его
+        # Убираем пробелы после запятых в allowed_ips (WireGuard их не понимает)
+        allowed_ips_clean = allowed_ips.replace(", ", ",").replace(" ,", ",")
         cmd = f"""
 echo '{preshared_key}' > /tmp/psk_{public_key[:8]}.key && \
-wg set {server.wg_interface} peer {public_key} preshared-key /tmp/psk_{public_key[:8]}.key allowed-ips {allowed_ips} && \
+wg set {server.wg_interface} peer {public_key} preshared-key /tmp/psk_{public_key[:8]}.key allowed-ips {allowed_ips_clean} && \
 rm /tmp/psk_{public_key[:8]}.key
 """
         success, stdout, stderr = await cls._ssh_execute(server, cmd)
