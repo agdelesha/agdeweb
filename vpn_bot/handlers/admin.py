@@ -407,7 +407,18 @@ async def admin_toggle_config(callback: CallbackQuery):
             return
         
         if config.is_active:
-            success, msg = await WireGuardService.disable_config(config.public_key)
+            # Отключаем конфиг
+            if config.server_id:
+                # Мультисервер - отключаем на удалённом сервере
+                server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+                if server:
+                    success, msg = await WireGuardMultiService.disable_config(config.public_key, server)
+                else:
+                    success, msg = True, "Сервер удалён"
+            else:
+                # Локальный сервер
+                success, msg = await WireGuardService.disable_config(config.public_key)
+            
             if success:
                 config.is_active = False
                 await session.commit()
@@ -416,9 +427,23 @@ async def admin_toggle_config(callback: CallbackQuery):
                 await callback.answer(f"Ошибка: {msg}", show_alert=True)
                 return
         else:
-            success, msg = await WireGuardService.enable_config(
-                config.public_key, config.preshared_key, config.allowed_ips
-            )
+            # Включаем конфиг
+            if config.server_id:
+                # Мультисервер - включаем на удалённом сервере
+                server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+                if server:
+                    success, msg = await WireGuardMultiService.enable_config(
+                        config.public_key, config.preshared_key, config.allowed_ips, server
+                    )
+                else:
+                    await callback.answer("❌ Сервер удалён, конфиг нельзя включить", show_alert=True)
+                    return
+            else:
+                # Локальный сервер
+                success, msg = await WireGuardService.enable_config(
+                    config.public_key, config.preshared_key, config.allowed_ips
+                )
+            
             if success:
                 config.is_active = True
                 await session.commit()
@@ -3924,8 +3949,18 @@ async def admin_toggle_server_config(callback: CallbackQuery):
             await callback.answer("Конфиг не найден", show_alert=True)
             return
         
+        # Получаем сервер для операций
+        cfg_server = None
+        if config.server_id:
+            cfg_server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+        
         if config.is_active:
-            success, msg = await WireGuardService.disable_config(config.public_key)
+            # Отключаем конфиг
+            if cfg_server:
+                success, msg = await WireGuardMultiService.disable_config(config.public_key, cfg_server)
+            else:
+                success, msg = await WireGuardService.disable_config(config.public_key)
+            
             if success:
                 config.is_active = False
                 await session.commit()
@@ -3934,9 +3969,19 @@ async def admin_toggle_server_config(callback: CallbackQuery):
                 await callback.answer(f"Ошибка: {msg}", show_alert=True)
                 return
         else:
-            success, msg = await WireGuardService.enable_config(
-                config.public_key, config.preshared_key, config.allowed_ips
-            )
+            # Включаем конфиг
+            if cfg_server:
+                success, msg = await WireGuardMultiService.enable_config(
+                    config.public_key, config.preshared_key, config.allowed_ips, cfg_server
+                )
+            elif config.server_id:
+                await callback.answer("❌ Сервер удалён, конфиг нельзя включить", show_alert=True)
+                return
+            else:
+                success, msg = await WireGuardService.enable_config(
+                    config.public_key, config.preshared_key, config.allowed_ips
+                )
+            
             if success:
                 config.is_active = True
                 await session.commit()

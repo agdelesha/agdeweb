@@ -5,8 +5,9 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from database import async_session, User, Subscription, Config
+from database import async_session, User, Subscription, Config, Server
 from services.wireguard import WireGuardService
+from services.wireguard_multi import WireGuardMultiService
 from services.monitoring import MonitoringService
 
 logger = logging.getLogger(__name__)
@@ -131,7 +132,18 @@ class SchedulerService:
                 
                 for config in user.configs:
                     if config.is_active:
-                        success, msg = await WireGuardService.disable_config(config.public_key)
+                        # Определяем на каком сервере конфиг
+                        if config.server_id:
+                            # Мультисервер - отключаем на удалённом сервере
+                            server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+                            if server:
+                                success, msg = await WireGuardMultiService.disable_config(config.public_key, server)
+                            else:
+                                success, msg = True, "Сервер удалён"
+                        else:
+                            # Локальный сервер
+                            success, msg = await WireGuardService.disable_config(config.public_key)
+                        
                         if success:
                             config.is_active = False
                             logger.info(f"Конфиг {config.name} отключен (подписка истекла)")
