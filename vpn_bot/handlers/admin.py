@@ -1356,8 +1356,21 @@ async def admin_confirm_delete(callback: CallbackQuery):
             await callback.answer("Пользователь не найден", show_alert=True)
             return
         
+        # Удаляем записи из очереди конфигов
+        from database.models import ConfigQueue
+        queue_stmt = select(ConfigQueue).where(ConfigQueue.user_id == user_id)
+        queue_result = await session.execute(queue_stmt)
+        for queue_item in queue_result.scalars().all():
+            await session.delete(queue_item)
+        
+        # Удаляем конфиги с серверов
         for config in user.configs:
-            await WireGuardService.delete_config(config.name)
+            if config.server_id:
+                server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+                if server:
+                    await WireGuardMultiService.delete_config(config.name, server)
+            else:
+                await WireGuardService.delete_config(config.name)
         
         await session.delete(user)
         await session.commit()
