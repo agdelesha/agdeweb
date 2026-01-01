@@ -487,6 +487,7 @@ def get_referrals_list_kb(users: list, page: int = 0, per_page: int = 10, pendin
     
     withdrawal_badge = f" ({pending_withdrawals})" if pending_withdrawals > 0 else ""
     buttons.append([InlineKeyboardButton(text=f"💸 Заявки на вывод{withdrawal_badge}", callback_data="admin_withdrawals")])
+    buttons.append([InlineKeyboardButton(text="📊 Установить % по умолчанию", callback_data="admin_referral_default_percent")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -505,6 +506,13 @@ def get_referral_percent_cancel_kb(user_id: int) -> InlineKeyboardMarkup:
     """Кнопка отмены при изменении % реферала"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_referral_{user_id}")]
+    ])
+
+
+def get_referral_default_percent_cancel_kb() -> InlineKeyboardMarkup:
+    """Кнопка отмены при изменении % по умолчанию"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_referrals")]
     ])
 
 

@@ -4604,6 +4604,97 @@ async def process_referral_percent(message: Message, state: FSMContext, bot: Bot
     )
 
 
+# ===== % ПО УМОЛЧАНИЮ ДЛЯ РЕФЕРАЛОВ =====
+
+@router.callback_query(F.data == "admin_referral_default_percent")
+async def admin_referral_default_percent(callback: CallbackQuery, state: FSMContext):
+    """Установка % по умолчанию для рефералов"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    await callback.answer()
+    
+    # Получаем текущий % по умолчанию
+    async with async_session() as session:
+        stmt = select(BotSettings).where(BotSettings.key == "default_referral_percent")
+        result = await session.execute(stmt)
+        setting = result.scalar_one_or_none()
+        current_percent = float(setting.value) if setting else 10.0
+    
+    await state.set_state(AdminStates.waiting_for_default_referral_percent)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
+    
+    from keyboards.admin_kb import get_referral_default_percent_cancel_kb
+    
+    await callback.message.edit_text(
+        f"📊 *Процент реферала по умолчанию*\n\n"
+        f"Текущий: {int(current_percent)}%\n\n"
+        f"ℹ️ _Этот % применяется к новым пользователям._\n"
+        f"_Если пользователю установлен % вручную, он имеет приоритет._\n\n"
+        f"Введи новый процент (от 1 до 100):",
+        parse_mode="Markdown",
+        reply_markup=get_referral_default_percent_cancel_kb()
+    )
+
+
+@router.message(AdminStates.waiting_for_default_referral_percent)
+async def process_default_referral_percent(message: Message, state: FSMContext, bot: Bot):
+    """Обработка ввода % по умолчанию"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    
+    try:
+        percent = float(message.text.strip().replace(",", "."))
+        if percent < 1 or percent > 100:
+            raise ValueError()
+    except ValueError:
+        from keyboards.admin_kb import get_referral_default_percent_cancel_kb
+        await message.answer(
+            "❌ Введи число от 1 до 100",
+            reply_markup=get_referral_default_percent_cancel_kb()
+        )
+        return
+    
+    # Удаляем сообщение с кнопкой "отмена"
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    # Сохраняем в BotSettings
+    async with async_session() as session:
+        stmt = select(BotSettings).where(BotSettings.key == "default_referral_percent")
+        result = await session.execute(stmt)
+        setting = result.scalar_one_or_none()
+        
+        if setting:
+            setting.value = str(percent)
+        else:
+            setting = BotSettings(key="default_referral_percent", value=str(percent))
+            session.add(setting)
+        
+        await session.commit()
+    
+    await state.clear()
+    
+    # Удаляем сообщение пользователя
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    await message.answer(
+        f"✅ Процент по умолчанию установлен: {int(percent)}%\n\n"
+        f"ℹ️ Новые пользователи будут получать этот % от оплат рефералов.",
+        reply_markup=get_admin_menu_kb()
+    )
+
+
 # ===== ЗАЯВКИ НА ВЫВОД =====
 
 @router.callback_query(F.data == "admin_withdrawals")

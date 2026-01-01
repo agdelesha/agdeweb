@@ -29,6 +29,7 @@ class AdminStates(StatesGroup):
     waiting_for_max_configs = State()
     waiting_for_user_max_configs = State()
     waiting_for_referral_percent = State()
+    waiting_for_default_referral_percent = State()
     # Управление ботами
     waiting_for_bot_token = State()
     waiting_for_bot_password = State()
