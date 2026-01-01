@@ -659,13 +659,21 @@ def get_logs_menu_kb(channels: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_log_channel_kb(channel_id: int, is_active: bool) -> InlineKeyboardMarkup:
+def get_log_channel_kb(channel_id: int, is_active: bool, bot_logs: bool = True, system_logs: bool = False, aiogram_logs: bool = False) -> InlineKeyboardMarkup:
     """Клавиатура управления каналом логов"""
     toggle_text = "🔴 Отключить" if is_active else "🟢 Включить"
+    
+    # Статусы типов логов
+    bot_status = "✅" if bot_logs else "❌"
+    sys_status = "✅" if system_logs else "❌"
+    net_status = "✅" if aiogram_logs else "❌"
+    
     buttons = [
         [InlineKeyboardButton(text=toggle_text, callback_data=f"log_toggle_{channel_id}")],
         [InlineKeyboardButton(text="📊 Уровень логов", callback_data=f"log_level_{channel_id}")],
-        [InlineKeyboardButton(text="📤 Перейти в чат", callback_data=f"log_goto_{channel_id}")],
+        [InlineKeyboardButton(text=f"{bot_status} Логи бота", callback_data=f"log_type_{channel_id}_bot_logs")],
+        [InlineKeyboardButton(text=f"{sys_status} Серверные логи", callback_data=f"log_type_{channel_id}_system_logs")],
+        [InlineKeyboardButton(text=f"{net_status} Сетевые логи", callback_data=f"log_type_{channel_id}_aiogram_logs")],
         [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"log_delete_{channel_id}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_logs")],
     ]

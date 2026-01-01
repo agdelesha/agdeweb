@@ -187,5 +187,9 @@ class LogChannel(Base):
     chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)  # ID чата/канала
     title: Mapped[str] = mapped_column(String(255), nullable=True)  # Название чата
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # Активен ли
-    log_level: Mapped[str] = mapped_column(String(20), default="INFO")  # Минимальный уровень логов (DEBUG, INFO, WARNING, ERROR)
+    log_level: Mapped[str] = mapped_column(String(20), default="INFO")  # Минимальный уровень логов
+    # Типы логов
+    bot_logs: Mapped[bool] = mapped_column(Boolean, default=True)  # Внутренние логи бота
+    system_logs: Mapped[bool] = mapped_column(Boolean, default=False)  # Серверные логи (journald)
+    aiogram_logs: Mapped[bool] = mapped_column(Boolean, default=False)  # Логи aiogram (ошибки сети и т.д.)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

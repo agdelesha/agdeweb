@@ -5407,14 +5407,23 @@ async def log_channel_detail(callback: CallbackQuery):
         status = "🟢 Активен" if channel.is_active else "🔴 Отключён"
         title = channel.title or f"ID: {channel.chat_id}"
         
+        # Статусы типов логов
+        bot_logs = getattr(channel, 'bot_logs', True)
+        system_logs = getattr(channel, 'system_logs', False)
+        aiogram_logs = getattr(channel, 'aiogram_logs', False)
+        
         await callback.message.edit_text(
             f"📝 *Канал логов*\n\n"
             f"📌 Название: {title}\n"
             f"🆔 ID: `{channel.chat_id}`\n"
             f"📊 Уровень: {channel.log_level}\n"
-            f"Статус: {status}",
+            f"Статус: {status}\n\n"
+            f"*Типы логов:*\n"
+            f"📦 Логи бота: {'✅' if bot_logs else '❌'}\n"
+            f"🖥 Серверные: {'✅' if system_logs else '❌'}\n"
+            f"🤖 Сетевые: {'✅' if aiogram_logs else '❌'}",
             parse_mode="Markdown",
-            reply_markup=get_log_channel_kb(channel.id, channel.is_active)
+            reply_markup=get_log_channel_kb(channel.id, channel.is_active, bot_logs, system_logs, aiogram_logs)
         )
 
 
@@ -5476,6 +5485,34 @@ async def log_set_level(callback: CallbackQuery):
         await callback.answer(f"Уровень установлен: {level}")
     
     # Возвращаемся к деталям канала
+    callback.data = f"log_channel_{channel_id}"
+    await log_channel_detail(callback)
+
+
+@router.callback_query(F.data.startswith("log_type_"))
+async def log_toggle_type(callback: CallbackQuery):
+    """Переключение типа логов"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    # log_type_{channel_id}_{type}
+    parts = callback.data.split("_")
+    channel_id = int(parts[2])
+    log_type = "_".join(parts[3:])  # bot_logs, system_logs, aiogram_logs
+    
+    from services.telegram_logger import toggle_log_type
+    
+    new_state = await toggle_log_type(channel_id, log_type)
+    if new_state is not None:
+        type_names = {
+            'bot_logs': 'Логи бота',
+            'system_logs': 'Серверные логи',
+            'aiogram_logs': 'Сетевые логи'
+        }
+        status = "включены" if new_state else "отключены"
+        await callback.answer(f"{type_names.get(log_type, log_type)} {status}")
+    
+    # Обновляем отображение
     callback.data = f"log_channel_{channel_id}"
     await log_channel_detail(callback)
 
