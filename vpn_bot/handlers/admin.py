@@ -5262,48 +5262,16 @@ async def admin_restart_confirm(callback: CallbackQuery):
     await callback.answer("🔄 Перезагружаю сервис...")
     
     await callback.message.edit_text(
-        "🔄 *Перезагрузка сервиса...*\n\n"
+        "✅ *Сервис перезагружается...*\n\n"
         "Бот будет недоступен несколько секунд.",
         parse_mode="Markdown"
     )
     
-    try:
-        logger.info(f"Администратор {callback.from_user.id} запустил перезагрузку сервиса")
-        
-        # Выполняем перезагрузку через subprocess
-        result = subprocess.run(
-            ['systemctl', 'restart', 'vpn-bot'],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        # Это сообщение может не отправиться, т.к. бот перезагрузится
-        if result.returncode == 0:
-            logger.info("Команда перезагрузки выполнена успешно")
-            await callback.message.edit_text("✅ Сервис перезагружается...")
-        else:
-            logger.error(f"Ошибка перезагрузки: {result.stderr}")
-            await callback.message.edit_text(
-                f"❌ Ошибка перезагрузки:\n`{result.stderr}`",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")]
-                ])
-            )
-    except subprocess.TimeoutExpired:
-        logger.error("Таймаут при перезагрузке сервиса")
-        await callback.message.edit_text(
-            "⚠️ Таймаут команды. Сервис может перезагружаться.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")]
-            ])
-        )
-    except Exception as e:
-        logger.error(f"Ошибка перезагрузки сервиса: {e}")
-        await callback.message.edit_text(
-            f"❌ Ошибка: {str(e)}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")]
-            ])
-        )
+    logger.info(f"Администратор {callback.from_user.id} запустил перезагрузку сервиса")
+    
+    # Запускаем перезагрузку в фоне с задержкой, чтобы сообщение успело отправиться
+    import asyncio
+    await asyncio.sleep(1)  # Даём время на отправку сообщения
+    
+    # Используем Popen чтобы не ждать завершения (бот всё равно умрёт)
+    subprocess.Popen(['systemctl', 'restart', 'vpn-bot'])
