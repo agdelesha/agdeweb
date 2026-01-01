@@ -5275,3 +5275,261 @@ async def admin_restart_confirm(callback: CallbackQuery):
     
     # Используем Popen чтобы не ждать завершения (бот всё равно умрёт)
     subprocess.Popen(['systemctl', 'restart', 'vpn-bot'])
+
+
+# ===== УПРАВЛЕНИЕ ЛОГАМИ =====
+
+@router.callback_query(F.data == "admin_logs")
+async def admin_logs(callback: CallbackQuery):
+    """Меню управления логами"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    
+    from services.telegram_logger import get_log_channels
+    from keyboards.admin_kb import get_logs_menu_kb
+    
+    channels = await get_log_channels()
+    
+    await callback.message.edit_text(
+        "📝 *Управление логами*\n\n"
+        "Логи отправляются в реальном времени в подключённые чаты.\n"
+        f"Подключено чатов: {len(channels)}",
+        parse_mode="Markdown",
+        reply_markup=get_logs_menu_kb(channels)
+    )
+
+
+@router.callback_query(F.data == "log_add_channel")
+async def log_add_channel(callback: CallbackQuery, state: FSMContext):
+    """Добавление канала для логов"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    
+    from keyboards.admin_kb import get_log_add_cancel_kb
+    
+    msg = await callback.message.edit_text(
+        "➕ *Добавление чата для логов*\n\n"
+        "Перешлите любое сообщение из чата/канала, куда нужно отправлять логи.\n\n"
+        "ℹ️ Бот должен быть админом в этом чате/канале.",
+        parse_mode="Markdown",
+        reply_markup=get_log_add_cancel_kb()
+    )
+    await state.set_state(AdminStates.waiting_for_log_channel)
+    await state.update_data(prompt_msg_id=msg.message_id)
+
+
+@router.message(AdminStates.waiting_for_log_channel)
+async def process_log_channel(message: Message, state: FSMContext, bot: Bot):
+    """Обработка пересланного сообщения для добавления канала логов"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    
+    # Проверяем что сообщение переслано
+    if not message.forward_from_chat:
+        await bot.send_message(
+            message.chat.id,
+            "❌ Перешлите сообщение из чата или канала"
+        )
+        return
+    
+    chat_id = message.forward_from_chat.id
+    chat_title = message.forward_from_chat.title or f"Chat {chat_id}"
+    
+    # Проверяем что бот может писать в этот чат
+    try:
+        test_msg = await bot.send_message(chat_id, "📝 Тестовое сообщение - логи подключены!")
+        await test_msg.delete()
+    except Exception as e:
+        await bot.send_message(
+            message.chat.id,
+            f"❌ Не могу отправить сообщение в этот чат.\n"
+            f"Убедитесь, что бот добавлен в чат и имеет права на отправку сообщений."
+        )
+        return
+    
+    # Добавляем канал
+    from services.telegram_logger import add_log_channel, get_log_channels
+    from keyboards.admin_kb import get_logs_menu_kb
+    
+    await add_log_channel(chat_id, chat_title)
+    await state.clear()
+    
+    channels = await get_log_channels()
+    
+    if prompt_msg_id:
+        try:
+            await bot.edit_message_text(
+                f"✅ Чат *{chat_title}* добавлен для логов!\n\n"
+                "📝 *Управление логами*\n"
+                f"Подключено чатов: {len(channels)}",
+                chat_id=message.chat.id,
+                message_id=prompt_msg_id,
+                parse_mode="Markdown",
+                reply_markup=get_logs_menu_kb(channels)
+            )
+        except:
+            pass
+
+
+@router.callback_query(F.data.startswith("log_channel_"))
+async def log_channel_detail(callback: CallbackQuery):
+    """Детали канала логов"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    channel_id = int(callback.data.replace("log_channel_", ""))
+    
+    from database.models import LogChannel
+    from keyboards.admin_kb import get_log_channel_kb
+    
+    async with async_session() as session:
+        stmt = select(LogChannel).where(LogChannel.id == channel_id)
+        result = await session.execute(stmt)
+        channel = result.scalar_one_or_none()
+        
+        if not channel:
+            await callback.answer("Канал не найден", show_alert=True)
+            return
+        
+        status = "🟢 Активен" if channel.is_active else "🔴 Отключён"
+        title = channel.title or f"ID: {channel.chat_id}"
+        
+        await callback.message.edit_text(
+            f"📝 *Канал логов*\n\n"
+            f"📌 Название: {title}\n"
+            f"🆔 ID: `{channel.chat_id}`\n"
+            f"📊 Уровень: {channel.log_level}\n"
+            f"Статус: {status}",
+            parse_mode="Markdown",
+            reply_markup=get_log_channel_kb(channel.id, channel.is_active)
+        )
+
+
+@router.callback_query(F.data.startswith("log_toggle_"))
+async def log_toggle_channel(callback: CallbackQuery):
+    """Переключение активности канала"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    channel_id = int(callback.data.replace("log_toggle_", ""))
+    
+    from services.telegram_logger import toggle_log_channel
+    
+    new_state = await toggle_log_channel(channel_id)
+    if new_state is not None:
+        status = "включён" if new_state else "отключён"
+        await callback.answer(f"Канал {status}")
+    
+    # Обновляем отображение
+    callback.data = f"log_channel_{channel_id}"
+    await log_channel_detail(callback)
+
+
+@router.callback_query(F.data.startswith("log_level_"))
+async def log_level_menu(callback: CallbackQuery):
+    """Меню выбора уровня логов"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    channel_id = int(callback.data.replace("log_level_", ""))
+    
+    from keyboards.admin_kb import get_log_level_kb
+    
+    await callback.message.edit_text(
+        "📊 *Выберите уровень логов*\n\n"
+        "🔍 DEBUG - все логи\n"
+        "ℹ️ INFO - информационные и выше\n"
+        "⚠️ WARNING - предупреждения и ошибки\n"
+        "❌ ERROR - только ошибки",
+        parse_mode="Markdown",
+        reply_markup=get_log_level_kb(channel_id)
+    )
+
+
+@router.callback_query(F.data.startswith("log_setlevel_"))
+async def log_set_level(callback: CallbackQuery):
+    """Установка уровня логов"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    parts = callback.data.split("_")
+    channel_id = int(parts[2])
+    level = parts[3]
+    
+    from services.telegram_logger import set_log_level
+    
+    if await set_log_level(channel_id, level):
+        await callback.answer(f"Уровень установлен: {level}")
+    
+    # Возвращаемся к деталям канала
+    callback.data = f"log_channel_{channel_id}"
+    await log_channel_detail(callback)
+
+
+@router.callback_query(F.data.startswith("log_delete_"))
+async def log_delete_channel(callback: CallbackQuery):
+    """Удаление канала логов"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    channel_id = int(callback.data.replace("log_delete_", ""))
+    
+    from services.telegram_logger import remove_log_channel, get_log_channels
+    from keyboards.admin_kb import get_logs_menu_kb
+    
+    await remove_log_channel(channel_id)
+    await callback.answer("Канал удалён")
+    
+    channels = await get_log_channels()
+    
+    await callback.message.edit_text(
+        "📝 *Управление логами*\n\n"
+        "Логи отправляются в реальном времени в подключённые чаты.\n"
+        f"Подключено чатов: {len(channels)}",
+        parse_mode="Markdown",
+        reply_markup=get_logs_menu_kb(channels)
+    )
+
+
+@router.callback_query(F.data.startswith("log_goto_"))
+async def log_goto_channel(callback: CallbackQuery, bot: Bot):
+    """Перейти в чат логов"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    channel_id = int(callback.data.replace("log_goto_", ""))
+    
+    from database.models import LogChannel
+    
+    async with async_session() as session:
+        stmt = select(LogChannel).where(LogChannel.id == channel_id)
+        result = await session.execute(stmt)
+        channel = result.scalar_one_or_none()
+        
+        if channel:
+            # Отправляем ссылку на чат
+            try:
+                chat = await bot.get_chat(channel.chat_id)
+                if chat.invite_link:
+                    await callback.answer()
+                    await callback.message.answer(
+                        f"📎 Ссылка на чат: {chat.invite_link}"
+                    )
+                else:
+                    await callback.answer("Нет ссылки на чат", show_alert=True)
+            except:
+                await callback.answer("Не удалось получить ссылку", show_alert=True)

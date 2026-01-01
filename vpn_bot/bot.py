@@ -180,6 +180,10 @@ async def main():
     uptime_monitor = init_monitor(bot)
     uptime_monitor.start()
     
+    # Логирование в Telegram
+    from services.telegram_logger import setup_telegram_logging, TelegramLogHandler
+    setup_telegram_logging(bot)
+    
     logger.info(f"Запуск бота... (ботов: {len(bots)})")
     
     # Бесконечный цикл с перезапуском при критических ошибках
@@ -193,6 +197,7 @@ async def main():
     
     scheduler.stop()
     uptime_monitor.stop()
+    TelegramLogHandler.stop()
     for b in bots:
         await b.session.close()
 

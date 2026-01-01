@@ -177,3 +177,15 @@ class ConfigQueue(Base):
     
     # Связь с пользователем
     user: Mapped["User"] = relationship("User", backref="queue_items")
+
+
+class LogChannel(Base):
+    """Чаты/каналы для отправки логов"""
+    __tablename__ = "log_channels"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)  # ID чата/канала
+    title: Mapped[str] = mapped_column(String(255), nullable=True)  # Название чата
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # Активен ли
+    log_level: Mapped[str] = mapped_column(String(20), default="INFO")  # Минимальный уровень логов (DEBUG, INFO, WARNING, ERROR)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

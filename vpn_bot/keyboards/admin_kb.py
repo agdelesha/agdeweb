@@ -17,6 +17,7 @@ def get_admin_menu_kb(pending_count: int = 0, pending_withdrawals: int = 0, queu
         [InlineKeyboardButton(text="✉️ Сообщение", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings")],
+        [InlineKeyboardButton(text="📝 Логи", callback_data="admin_logs")],
         [InlineKeyboardButton(text="🔄 Перезагрузить сервис", callback_data="admin_restart_service")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -636,4 +637,55 @@ def get_price_edit_cancel_kb() -> InlineKeyboardMarkup:
     """Клавиатура отмены при редактировании цены"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_prices")]
+    ])
+
+
+# ===== УПРАВЛЕНИЕ ЛОГАМИ =====
+
+def get_logs_menu_kb(channels: list) -> InlineKeyboardMarkup:
+    """Клавиатура управления логами"""
+    buttons = []
+    
+    for channel in channels:
+        status = "🟢" if channel.is_active else "🔴"
+        title = channel.title or f"ID: {channel.chat_id}"
+        buttons.append([InlineKeyboardButton(
+            text=f"{status} {title} [{channel.log_level}]",
+            callback_data=f"log_channel_{channel.id}"
+        )])
+    
+    buttons.append([InlineKeyboardButton(text="➕ Добавить чат", callback_data="log_add_channel")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_log_channel_kb(channel_id: int, is_active: bool) -> InlineKeyboardMarkup:
+    """Клавиатура управления каналом логов"""
+    toggle_text = "🔴 Отключить" if is_active else "🟢 Включить"
+    buttons = [
+        [InlineKeyboardButton(text=toggle_text, callback_data=f"log_toggle_{channel_id}")],
+        [InlineKeyboardButton(text="📊 Уровень логов", callback_data=f"log_level_{channel_id}")],
+        [InlineKeyboardButton(text="📤 Перейти в чат", callback_data=f"log_goto_{channel_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"log_delete_{channel_id}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_logs")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_log_level_kb(channel_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура выбора уровня логов"""
+    buttons = [
+        [InlineKeyboardButton(text="🔍 DEBUG", callback_data=f"log_setlevel_{channel_id}_DEBUG")],
+        [InlineKeyboardButton(text="ℹ️ INFO", callback_data=f"log_setlevel_{channel_id}_INFO")],
+        [InlineKeyboardButton(text="⚠️ WARNING", callback_data=f"log_setlevel_{channel_id}_WARNING")],
+        [InlineKeyboardButton(text="❌ ERROR", callback_data=f"log_setlevel_{channel_id}_ERROR")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"log_channel_{channel_id}")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_log_add_cancel_kb() -> InlineKeyboardMarkup:
+    """Клавиатура отмены при добавлении канала"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_logs")]
     ])

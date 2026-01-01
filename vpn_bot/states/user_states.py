@@ -39,6 +39,8 @@ class AdminStates(StatesGroup):
     waiting_for_price_30 = State()
     waiting_for_price_90 = State()
     waiting_for_price_180 = State()
+    # Управление логами
+    waiting_for_log_channel = State()
 
 
 class WithdrawalStates(StatesGroup):
