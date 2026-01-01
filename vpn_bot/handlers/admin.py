@@ -299,11 +299,15 @@ async def admin_user_stats(callback: CallbackQuery):
     
     text += f"\n📈 Всего: {len(users)} пользователей"
     
-    await callback.message.edit_text(
-        text,
-        parse_mode=None,
-        reply_markup=get_user_stats_kb(auto_delete, page, total_pages)
-    )
+    try:
+        await callback.message.edit_text(
+            text,
+            parse_mode=None,
+            reply_markup=get_user_stats_kb(auto_delete, page, total_pages)
+        )
+    except Exception:
+        # Сообщение не изменилось — игнорируем
+        pass
 
 
 @router.callback_query(F.data == "admin_toggle_auto_delete")
