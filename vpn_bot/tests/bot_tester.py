@@ -29,8 +29,8 @@ except ImportError:
 
 
 # ============ НАСТРОЙКИ ============
-API_ID = None  # Получить на https://my.telegram.org
-API_HASH = None  # Получить на https://my.telegram.org
+API_ID = 36006515
+API_HASH = "0acd58275a82877a1a8da09804b10e46"
 BOT_USERNAME = "@agdevpnbot"  # Username бота для тестирования
 SESSION_NAME = "bot_tester"
 # ===================================
@@ -49,7 +49,9 @@ class BotTester:
         """Запуск клиента"""
         self.client = Client(SESSION_NAME, api_id=self.api_id, api_hash=self.api_hash)
         await self.client.start()
-        print(f"✅ Клиент запущен как {(await self.client.get_me()).first_name}")
+        me = await self.client.get_me()
+        name = me.first_name.encode('ascii', 'replace').decode('ascii')
+        print(f"[OK] Client started as {name}")
     
     async def stop(self):
         """Остановка клиента"""
@@ -69,99 +71,105 @@ class BotTester:
                     return msg
             return None
         except Exception as e:
-            print(f"❌ Ошибка отправки команды {command}: {e}")
+            print(f"[ERROR] Send command {command}: {e}")
             return None
     
     async def click_button(self, button_text: str = None, callback_data: str = None, 
                            wait_seconds: float = 1.5) -> Tuple[bool, str]:
-        """Нажать кнопку в текущем сообщении"""
-        if not self.current_message or not self.current_message.reply_markup:
-            return False, "Нет сообщения с кнопками"
+        """Нажать кнопку в текущем сообщении (inline или reply)"""
+        if not self.current_message:
+            return False, "No current message"
         
         try:
-            # Ищем кнопку
-            for row in self.current_message.reply_markup.inline_keyboard:
-                for button in row:
-                    if button_text and button_text in button.text:
-                        await self.current_message.click(button.text)
-                        await asyncio.sleep(wait_seconds)
+            # Проверяем inline keyboard
+            if self.current_message.reply_markup and hasattr(self.current_message.reply_markup, 'inline_keyboard'):
+                for row in self.current_message.reply_markup.inline_keyboard:
+                    for button in row:
+                        if button_text and button_text in button.text:
+                            await self.current_message.click(button.text)
+                            await asyncio.sleep(wait_seconds)
+                            
+                            async for msg in self.client.get_chat_history(self.bot_username, limit=1):
+                                if msg.from_user and msg.from_user.is_bot:
+                                    self.current_message = msg
+                            
+                            return True, f"Clicked: {button.text}"
                         
-                        # Обновляем текущее сообщение
-                        async for msg in self.client.get_chat_history(self.bot_username, limit=1):
-                            if msg.from_user and msg.from_user.is_bot:
-                                self.current_message = msg
-                        
-                        return True, f"Нажата кнопка: {button.text}"
-                    
-                    if callback_data and button.callback_data == callback_data:
-                        await self.current_message.click(callback_data)
-                        await asyncio.sleep(wait_seconds)
-                        
-                        async for msg in self.client.get_chat_history(self.bot_username, limit=1):
-                            if msg.from_user and msg.from_user.is_bot:
-                                self.current_message = msg
-                        
-                        return True, f"Нажата кнопка: {button.text}"
+                        if callback_data and button.callback_data == callback_data:
+                            await self.current_message.click(callback_data)
+                            await asyncio.sleep(wait_seconds)
+                            
+                            async for msg in self.client.get_chat_history(self.bot_username, limit=1):
+                                if msg.from_user and msg.from_user.is_bot:
+                                    self.current_message = msg
+                            
+                            return True, f"Clicked: {button.text}"
             
-            return False, f"Кнопка не найдена: {button_text or callback_data}"
+            # Если inline не найден, отправляем текст как сообщение (для ReplyKeyboard)
+            if button_text:
+                msg = await self.send_command(button_text, wait_seconds)
+                if msg:
+                    return True, f"Sent as text: {button_text}"
+            
+            return False, f"Button not found: {button_text or callback_data}"
         
         except MessageNotModified:
-            return True, "Сообщение не изменилось (это нормально)"
+            return True, "Message not modified (OK)"
         except Exception as e:
-            return False, f"Ошибка: {e}"
+            return False, f"Error: {e}"
     
     async def test_command(self, command: str, expected_text: str = None) -> bool:
         """Тест команды"""
-        print(f"\n🔹 Тест команды: {command}")
+        print(f"\n[TEST] Command: {command}")
         msg = await self.send_command(command)
         
         if not msg:
-            self.results.append((f"Команда {command}", False, "Нет ответа"))
-            print(f"  ❌ Нет ответа от бота")
+            self.results.append((f"Command {command}", False, "No response"))
+            print(f"  [FAIL] No response from bot")
             return False
         
         if expected_text and expected_text not in (msg.text or msg.caption or ""):
-            self.results.append((f"Команда {command}", False, f"Ожидался текст: {expected_text}"))
-            print(f"  ❌ Ожидался текст: {expected_text}")
+            self.results.append((f"Command {command}", False, f"Expected: {expected_text}"))
+            print(f"  [FAIL] Expected text: {expected_text}")
             return False
         
-        self.results.append((f"Команда {command}", True, msg.text[:50] if msg.text else "OK"))
-        print(f"  ✅ Ответ получен")
+        self.results.append((f"Command {command}", True, "OK"))
+        print(f"  [OK] Response received")
         return True
     
     async def test_button(self, button_text: str, expected_text: str = None) -> bool:
         """Тест нажатия кнопки"""
-        print(f"  🔸 Нажатие кнопки: {button_text}")
+        print(f"  [BTN] {button_text}")
         success, result = await self.click_button(button_text=button_text)
         
         if not success:
-            self.results.append((f"Кнопка '{button_text}'", False, result))
-            print(f"    ❌ {result}")
+            self.results.append((f"Button '{button_text}'", False, result))
+            print(f"    [FAIL] {result}")
             return False
         
         if expected_text and self.current_message:
             text = self.current_message.text or self.current_message.caption or ""
             if expected_text not in text:
-                self.results.append((f"Кнопка '{button_text}'", False, f"Ожидался: {expected_text}"))
-                print(f"    ❌ Ожидался текст: {expected_text}")
+                self.results.append((f"Button '{button_text}'", False, f"Expected: {expected_text}"))
+                print(f"    [FAIL] Expected text: {expected_text}")
                 return False
         
-        self.results.append((f"Кнопка '{button_text}'", True, "OK"))
-        print(f"    ✅ OK")
+        self.results.append((f"Button '{button_text}'", True, "OK"))
+        print(f"    [OK]")
         return True
     
     async def run_all_tests(self):
         """Запуск всех тестов"""
         print("\n" + "=" * 50)
-        print("🧪 АВТОТЕСТИРОВАНИЕ VPN БОТА")
+        print("AUTOTESTING VPN BOT")
         print("=" * 50)
         
         # === ТЕСТЫ ПОЛЬЗОВАТЕЛЬСКИХ КОМАНД ===
-        print("\n📱 ПОЛЬЗОВАТЕЛЬСКИЕ КОМАНДЫ")
+        print("\n[USER COMMANDS]")
         print("-" * 30)
         
         # /start
-        await self.test_command("/start", "Привет")
+        await self.test_command("/start")
         
         # Главное меню
         await self.test_button("🔑 Мои конфиги")
@@ -177,10 +185,10 @@ class BotTester:
         await self.test_button("◀️ Назад")
         
         # === ТЕСТЫ АДМИН-ПАНЕЛИ ===
-        print("\n🔧 АДМИН-ПАНЕЛЬ")
+        print("\n[ADMIN PANEL]")
         print("-" * 30)
         
-        await self.test_command("/admin", "Админ-панель")
+        await self.test_command("/admin")
         
         # Статистика пользователей
         await self.test_button("📊 Статистика")
@@ -212,35 +220,35 @@ class BotTester:
     def print_results(self):
         """Вывод результатов тестирования"""
         print("\n" + "=" * 50)
-        print("📊 РЕЗУЛЬТАТЫ ТЕСТИРОВАНИЯ")
+        print("RESULTS")
         print("=" * 50)
         
         passed = sum(1 for _, success, _ in self.results if success)
         failed = sum(1 for _, success, _ in self.results if not success)
         
-        print(f"\n✅ Пройдено: {passed}")
-        print(f"❌ Провалено: {failed}")
-        print(f"📈 Всего: {len(self.results)}")
+        print(f"\n[PASSED]: {passed}")
+        print(f"[FAILED]: {failed}")
+        print(f"[TOTAL]: {len(self.results)}")
         
         if failed > 0:
-            print("\n❌ ПРОВАЛИВШИЕСЯ ТЕСТЫ:")
+            print("\n[FAILED TESTS]:")
             for name, success, msg in self.results:
                 if not success:
-                    print(f"  • {name}: {msg}")
+                    print(f"  - {name}: {msg}")
         
         print("\n" + "=" * 50)
         if failed == 0:
-            print("🎉 ВСЕ ТЕСТЫ ПРОЙДЕНЫ!")
+            print("ALL TESTS PASSED!")
         else:
-            print(f"⚠️ {failed} ТЕСТОВ ПРОВАЛЕНО")
+            print(f"{failed} TESTS FAILED")
         print("=" * 50)
 
 
 async def main():
     # Проверяем настройки
     if not API_ID or not API_HASH:
-        print("❌ Укажите API_ID и API_HASH в начале файла!")
-        print("   Получить можно на https://my.telegram.org")
+        print("[ERROR] Set API_ID and API_HASH at the top of the file!")
+        print("   Get them at https://my.telegram.org")
         
         # Интерактивный ввод
         try:
