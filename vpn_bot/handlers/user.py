@@ -140,8 +140,14 @@ async def check_channel_subscription(bot: Bot, user_id: int, bot_id: int = None)
         channel = await get_channel_name(bot_id)
         if not channel:
             return True  # Если канал не настроен - пропускаем проверку
+        
+        # Убираем @ если он уже есть в названии
+        channel = channel.lstrip('@')
+        
         member = await bot.get_chat_member(f"@{channel}", user_id)
-        return member.status in ["member", "administrator", "creator"]
+        logger.debug(f"Проверка подписки user={user_id} channel=@{channel} status={member.status}")
+        # Проверяем что пользователь НЕ вышел/не забанен
+        return member.status not in ["left", "kicked"]
     except Exception as e:
         logger.error(f"Ошибка проверки подписки: {e}")
         return False
@@ -333,7 +339,9 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         )
     
     # Проверяем, завершена ли регистрация (новый пользователь или не завершил регистрацию)
-    needs_registration = is_new or not getattr(user, 'registration_complete', True)
+    # None или True = регистрация завершена (для старых клиентов), False = нужна регистрация
+    registration_complete = getattr(user, 'registration_complete', None)
+    needs_registration = is_new or registration_complete is False
     
     if needs_registration:
         # Проверяем, нужен ли пароль (индивидуально для бота)
