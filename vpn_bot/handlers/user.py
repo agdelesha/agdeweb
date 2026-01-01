@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 from datetime import datetime, timedelta
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, FSInputFile, InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery, FSInputFile, InputMediaPhoto, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from sqlalchemy import select
@@ -1147,7 +1147,10 @@ async def send_receipt(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "📸 *Отправьте фото чека об оплате*\n\n"
         "Просто отправьте фотографию в этот чат.",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_payment")]
+        ])
     )
 
 
@@ -1192,7 +1195,7 @@ async def pay_with_referral_balance(callback: CallbackQuery, state: FSMContext, 
         return
     
     async with async_session() as session:
-        stmt = select(User).where(User.telegram_id == callback.from_user.id)
+        stmt = select(User).where(User.telegram_id == callback.from_user.id).options(selectinload(User.subscriptions))
         result = await session.execute(stmt)
         user = result.scalar_one_or_none()
         
