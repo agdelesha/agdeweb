@@ -296,13 +296,28 @@ async def admin_user_detail(callback: CallbackQuery, state: FSMContext):
     
     traffic_info = ""
     if not LOCAL_MODE and user.configs:
-        traffic_stats = await WireGuardService.get_traffic_stats()
-        for config in user.configs:
-            if config.public_key in traffic_stats:
-                stats = traffic_stats[config.public_key]
-                rx = WireGuardService.format_bytes(stats['received'])
-                tx = WireGuardService.format_bytes(stats['sent'])
-                traffic_info += f"\n📊 {config.name}: ⬇️{rx} ⬆️{tx}"
+        # Собираем трафик со всех серверов
+        server_traffic_cache = {}  # Кэш трафика по server_id
+        async with async_session() as traffic_session:
+            for config in user.configs:
+                if config.server_id:
+                    # Мультисервер
+                    if config.server_id not in server_traffic_cache:
+                        server = await WireGuardMultiService.get_server_by_id(traffic_session, config.server_id)
+                        if server:
+                            server_traffic_cache[config.server_id] = await WireGuardMultiService.get_traffic_stats(server)
+                        else:
+                            server_traffic_cache[config.server_id] = {}
+                    traffic_stats = server_traffic_cache[config.server_id]
+                else:
+                    # Локальный сервер
+                    traffic_stats = await WireGuardService.get_traffic_stats()
+                
+                if config.public_key in traffic_stats:
+                    stats = traffic_stats[config.public_key]
+                    rx = WireGuardService.format_bytes(stats['received'])
+                    tx = WireGuardService.format_bytes(stats['sent'])
+                    traffic_info += f"\n📊 {config.name}: ⬇️{rx} ⬆️{tx}"
     
     username = f"@{user.username}" if user.username else "—"
     max_configs_text = f" (лимит: {user.max_configs})" if user.max_configs else ""
@@ -372,12 +387,23 @@ async def admin_config_detail(callback: CallbackQuery):
     
     traffic_info = ""
     if not LOCAL_MODE:
-        traffic_stats = await WireGuardService.get_traffic_stats()
-        if config.public_key in traffic_stats:
-            stats = traffic_stats[config.public_key]
-            rx = WireGuardService.format_bytes(stats['received'])
-            tx = WireGuardService.format_bytes(stats['sent'])
-            traffic_info = f"\n📊 Трафик: ⬇️{rx} ⬆️{tx}"
+        async with async_session() as traffic_session:
+            if config.server_id:
+                # Мультисервер
+                server = await WireGuardMultiService.get_server_by_id(traffic_session, config.server_id)
+                if server:
+                    traffic_stats = await WireGuardMultiService.get_traffic_stats(server)
+                else:
+                    traffic_stats = {}
+            else:
+                # Локальный сервер
+                traffic_stats = await WireGuardService.get_traffic_stats()
+            
+            if config.public_key in traffic_stats:
+                stats = traffic_stats[config.public_key]
+                rx = WireGuardService.format_bytes(stats['received'])
+                tx = WireGuardService.format_bytes(stats['sent'])
+                traffic_info = f"\n📊 Трафик: ⬇️{rx} ⬆️{tx}"
     
     await callback.message.edit_text(
         f"📱 *Конфиг: {config.name}*\n\n"
@@ -3917,8 +3943,8 @@ async def admin_server_config_detail(callback: CallbackQuery):
             status = "🟢 Активен" if config.is_active else "🔴 Отключен"
         
         traffic_info = ""
-        if not LOCAL_MODE and not server_deleted:
-            traffic_stats = await WireGuardService.get_traffic_stats()
+        if not LOCAL_MODE and not server_deleted and cfg_server:
+            traffic_stats = await WireGuardMultiService.get_traffic_stats(cfg_server)
             if config.public_key in traffic_stats:
                 stats = traffic_stats[config.public_key]
                 rx = WireGuardService.format_bytes(stats['received'])
