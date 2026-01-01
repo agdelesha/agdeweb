@@ -17,6 +17,7 @@ def get_admin_menu_kb(pending_count: int = 0, pending_withdrawals: int = 0, queu
         [InlineKeyboardButton(text="✉️ Сообщение", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings")],
+        [InlineKeyboardButton(text="🔄 Перезагрузить сервис", callback_data="admin_restart_service")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

@@ -3,11 +3,11 @@ import logging
 from datetime import datetime, timedelta
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_, or_
 from sqlalchemy.orm import selectinload
-
+import logging
+import subprocess
 from config import TARIFFS, ADMIN_ID, LOCAL_MODE
 from database import async_session, User, Config, Subscription, Payment, Server, WithdrawalRequest
 from keyboards.admin_kb import (
@@ -5223,3 +5223,86 @@ async def process_price_180(message: Message, state: FSMContext):
         parse_mode="Markdown",
         reply_markup=get_prices_kb(prices)
     )
+
+
+# ===== ПЕРЕЗАГРУЗКА СЕРВИСА =====
+
+@router.callback_query(F.data == "admin_restart_service")
+async def admin_restart_service(callback: CallbackQuery):
+    """Перезагрузка сервиса бота"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    await callback.answer()
+    
+    await callback.message.edit_text(
+        "⚠️ *Перезагрузка сервиса*\n\n"
+        "Бот будет перезапущен через systemctl.\n"
+        "Это займёт около 5 секунд.\n\n"
+        "Продолжить?",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Да, перезагрузить", callback_data="admin_restart_confirm"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="admin_menu")
+            ]
+        ])
+    )
+
+
+@router.callback_query(F.data == "admin_restart_confirm")
+async def admin_restart_confirm(callback: CallbackQuery):
+    """Подтверждение перезагрузки"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    await callback.answer("🔄 Перезагружаю сервис...")
+    
+    await callback.message.edit_text(
+        "🔄 *Перезагрузка сервиса...*\n\n"
+        "Бот будет недоступен несколько секунд.",
+        parse_mode="Markdown"
+    )
+    
+    try:
+        logger.info(f"Администратор {callback.from_user.id} запустил перезагрузку сервиса")
+        
+        # Выполняем перезагрузку через subprocess
+        result = subprocess.run(
+            ['systemctl', 'restart', 'vpn-bot'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        # Это сообщение может не отправиться, т.к. бот перезагрузится
+        if result.returncode == 0:
+            logger.info("Команда перезагрузки выполнена успешно")
+            await callback.message.edit_text("✅ Сервис перезагружается...")
+        else:
+            logger.error(f"Ошибка перезагрузки: {result.stderr}")
+            await callback.message.edit_text(
+                f"❌ Ошибка перезагрузки:\n`{result.stderr}`",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")]
+                ])
+            )
+    except subprocess.TimeoutExpired:
+        logger.error("Таймаут при перезагрузке сервиса")
+        await callback.message.edit_text(
+            "⚠️ Таймаут команды. Сервис может перезагружаться.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")]
+            ])
+        )
+    except Exception as e:
+        logger.error(f"Ошибка перезагрузки сервиса: {e}")
+        await callback.message.edit_text(
+            f"❌ Ошибка: {str(e)}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")]
+            ])
+        )
