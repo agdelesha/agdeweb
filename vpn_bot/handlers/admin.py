@@ -408,12 +408,12 @@ async def admin_config_detail(callback: CallbackQuery):
                 traffic_info = f"\n📊 Трафик: ⬇️{rx} ⬆️{tx}"
     
     await callback.message.edit_text(
-        f"📱 *Конфиг: {config.name}*\n\n"
+        f"📱 Конфиг: {config.name}\n\n"
         f"Статус: {status}\n"
-        f"IP: `{config.client_ip}`\n"
+        f"IP: {config.client_ip}\n"
         f"Создан: {format_date_moscow(config.created_at)}"
         f"{traffic_info}",
-        parse_mode="Markdown",
+        parse_mode=None,
         reply_markup=get_admin_config_kb(config.id, config.user_id, config.is_active)
     )
 
@@ -482,11 +482,11 @@ async def admin_toggle_config(callback: CallbackQuery):
         
         status = "🟢 Активен" if config.is_active else "🔴 Отключен"
         await callback.message.edit_text(
-            f"📱 *Конфиг: {config.name}*\n\n"
+            f"📱 Конфиг: {config.name}\n\n"
             f"Статус: {status}\n"
-            f"IP: `{config.client_ip}`\n"
+            f"IP: {config.client_ip}\n"
             f"Создан: {format_date_moscow(config.created_at)}",
-            parse_mode="Markdown",
+            parse_mode=None,
             reply_markup=get_admin_config_kb(config.id, config.user_id, config.is_active)
         )
 
@@ -1118,10 +1118,10 @@ async def admin_gift_menu(callback: CallbackQuery):
         user_info = f"@{user.username}" if user.username else user.full_name
     
     await callback.message.edit_text(
-        f"🎁 *Подарить подписку*\n\n"
+        f"🎁 Подарить подписку\n\n"
         f"👤 Пользователь: {user_info}\n\n"
         f"Выбери срок подписки:",
-        parse_mode="Markdown",
+        parse_mode=None,
         reply_markup=get_gift_menu_kb(user_id)
     )
 
@@ -1223,10 +1223,10 @@ async def admin_gift_subscription(callback: CallbackQuery, bot: Bot):
         # Возвращаемся в админское меню пользователя
         user_info = f"@{user.username}" if user.username else user.full_name
         await callback.message.edit_text(
-            f"✅ *Подписка подарена!*\n\n"
+            f"✅ Подписка подарена!\n\n"
             f"👤 Пользователь: {user_info}\n"
             f"🎁 Подарок: {gift_text}",
-            parse_mode="Markdown",
+            parse_mode=None,
             reply_markup=get_user_detail_kb(user_id)
         )
         
@@ -1361,15 +1361,15 @@ async def admin_delete_user_confirm(callback: CallbackQuery):
     username = f"@{user.username}" if user.username else user.full_name
     
     await callback.message.edit_text(
-        f"⚠️ *Подтвердите удаление*\n\n"
+        f"⚠️ Подтвердите удаление\n\n"
         f"Пользователь: {username}\n"
-        f"ID: `{user.telegram_id}`\n\n"
+        f"ID: {user.telegram_id}\n\n"
         f"Будут удалены:\n"
         f"• Все конфиги\n"
         f"• Все подписки\n"
         f"• История платежей\n\n"
         f"Это действие нельзя отменить!",
-        parse_mode="Markdown",
+        parse_mode=None,
         reply_markup=get_confirm_delete_kb(user.id)
     )
 
