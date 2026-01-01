@@ -9,16 +9,13 @@ def get_admin_menu_kb(pending_count: int = 0, pending_withdrawals: int = 0, queu
     buttons = [
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users")],
         [InlineKeyboardButton(text=f"💰 Ожидают оплаты{pending_badge}", callback_data="admin_pending_payments")],
-        [InlineKeyboardButton(text=f"💸 Заявки на вывод{withdrawal_badge}", callback_data="admin_withdrawals")],
         [InlineKeyboardButton(text=f"⏳ Очередь конфигов{queue_badge}", callback_data="admin_config_queue")],
         [InlineKeyboardButton(text=f"📊 Статистика пользователей{inactive_badge}", callback_data="admin_user_stats")],
-        [InlineKeyboardButton(text="👥 Рефералы", callback_data="admin_referrals")],
+        [InlineKeyboardButton(text=f"👥 Рефералы{withdrawal_badge}", callback_data="admin_referrals")],
         [InlineKeyboardButton(text="🖥 Серверы", callback_data="admin_servers")],
         [InlineKeyboardButton(text="🤖 Боты", callback_data="settings_bots")],
         [InlineKeyboardButton(text="💵 Цены", callback_data="admin_prices")],
         [InlineKeyboardButton(text="✉️ Сообщение", callback_data="admin_broadcast")],
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings")],
         [InlineKeyboardButton(text="📝 Логи", callback_data="admin_logs")],
         [InlineKeyboardButton(text="🔄 Перезагрузить сервис", callback_data="admin_restart_service")],
     ]
@@ -154,13 +151,13 @@ def get_config_request_kb(user_id: int) -> InlineKeyboardMarkup:
 
 
 def get_settings_kb() -> InlineKeyboardMarkup:
+    """Общие настройки (по умолчанию для всех ботов)"""
     buttons = [
-        [InlineKeyboardButton(text="🔑 Пароль", callback_data="settings_password")],
-        [InlineKeyboardButton(text="📢 Подписка на канал", callback_data="settings_channel")],
-        [InlineKeyboardButton(text="📱 Запрос телефона", callback_data="settings_phone")],
+        [InlineKeyboardButton(text="🔑 Пароль (по умолчанию)", callback_data="settings_password")],
+        [InlineKeyboardButton(text="📢 Канал (по умолчанию)", callback_data="settings_channel")],
+        [InlineKeyboardButton(text="📱 Запрос телефона (по умолчанию)", callback_data="settings_phone")],
         [InlineKeyboardButton(text="📋 Подтверждение доп. конфига", callback_data="settings_config_approval")],
-        [InlineKeyboardButton(text="📊 Мониторинг", callback_data="settings_monitoring")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="settings_bots")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -173,7 +170,7 @@ def get_config_approval_kb(is_enabled: bool, max_configs: int = 0) -> InlineKeyb
             InlineKeyboardButton(text="🔴 Выкл", callback_data="settings_config_approval_off"),
         ],
         [InlineKeyboardButton(text=max_text, callback_data="settings_max_configs")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_settings")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="settings_bots")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -198,7 +195,7 @@ def get_phone_settings_kb(is_enabled: bool) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🟢 Вкл", callback_data="settings_phone_on"),
             InlineKeyboardButton(text="🔴 Выкл", callback_data="settings_phone_off"),
         ],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_settings")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="settings_bots")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -211,7 +208,7 @@ def get_password_settings_kb(is_enabled: bool) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔴 Выкл", callback_data="settings_password_off"),
         ],
         [InlineKeyboardButton(text="✏️ Изменить пароль", callback_data="settings_password_change")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_settings")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="settings_bots")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -223,7 +220,7 @@ def get_channel_settings_kb(is_enabled: bool) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔴 Выкл", callback_data="settings_channel_off"),
         ],
         [InlineKeyboardButton(text="✏️ Изменить канал", callback_data="settings_channel_change")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_settings")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="settings_bots")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -244,7 +241,7 @@ def get_monitoring_settings_kb(is_enabled: bool) -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton(text="📊 Порог трафика", callback_data="settings_monitoring_traffic")],
         [InlineKeyboardButton(text="📱 Порог конфигов", callback_data="settings_monitoring_configs")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_settings")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_user_stats")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -465,7 +462,7 @@ def get_server_broadcast_cancel_kb(server_id: int) -> InlineKeyboardMarkup:
     ])
 
 
-def get_referrals_list_kb(users: list, page: int = 0, per_page: int = 10) -> InlineKeyboardMarkup:
+def get_referrals_list_kb(users: list, page: int = 0, per_page: int = 10, pending_withdrawals: int = 0) -> InlineKeyboardMarkup:
     """Клавиатура списка рефералов (пользователей с приглашёнными)"""
     buttons = []
     start = page * per_page
@@ -488,6 +485,8 @@ def get_referrals_list_kb(users: list, page: int = 0, per_page: int = 10) -> Inl
     if nav_buttons:
         buttons.append(nav_buttons)
     
+    withdrawal_badge = f" ({pending_withdrawals})" if pending_withdrawals > 0 else ""
+    buttons.append([InlineKeyboardButton(text=f"💸 Заявки на вывод{withdrawal_badge}", callback_data="admin_withdrawals")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -530,7 +529,7 @@ def get_withdrawals_list_kb(withdrawals: list) -> InlineKeyboardMarkup:
             text=f"💸 {name} — {int(w.amount)}₽",
             callback_data=f"admin_withdrawal_{w.id}"
         )])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_referrals")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -547,7 +546,8 @@ def get_bots_list_kb(bots: list) -> InlineKeyboardMarkup:
             callback_data=f"bot_settings_{bot.bot_id}"
         )])
     buttons.append([InlineKeyboardButton(text="➕ Добавить бота", callback_data="bot_add")])
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_settings")])
+    buttons.append([InlineKeyboardButton(text="⚙️ Общие настройки", callback_data="admin_settings")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -729,6 +729,7 @@ def get_user_stats_kb(auto_delete: bool = False, page: int = 0, total_pages: int
     buttons.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_user_stats")])
     buttons.append([InlineKeyboardButton(text="🗑 Удалить неактивных", callback_data="admin_delete_inactive")])
     buttons.append([InlineKeyboardButton(text=auto_delete_text, callback_data="admin_toggle_auto_delete")])
+    buttons.append([InlineKeyboardButton(text="📊 Мониторинг", callback_data="settings_monitoring")])
     buttons.append([InlineKeyboardButton(text="◀️ В меню", callback_data="admin_menu")])
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)

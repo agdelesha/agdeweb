@@ -4429,11 +4429,16 @@ async def admin_referrals(callback: CallbackQuery):
         
         # Фильтруем только тех у кого есть рефералы или баланс
         users_with_referrals = [u for u in all_users if (u.referrals and len(u.referrals) > 0) or u.referral_balance > 0]
+        
+        # Считаем заявки на вывод
+        stmt_w = select(func.count()).select_from(WithdrawalRequest).where(WithdrawalRequest.status == "pending")
+        result_w = await session.execute(stmt_w)
+        pending_withdrawals = result_w.scalar()
     
     if not users_with_referrals:
         await callback.message.edit_text(
             "📭 Пока нет пользователей с рефералами",
-            reply_markup=get_admin_menu_kb()
+            reply_markup=get_referrals_list_kb([], pending_withdrawals=pending_withdrawals)
         )
         return
     
@@ -4441,7 +4446,7 @@ async def admin_referrals(callback: CallbackQuery):
         f"👥 *Рефералы ({len(users_with_referrals)}):*\n\n"
         f"Пользователи с приглашёнными друзьями:",
         parse_mode="Markdown",
-        reply_markup=get_referrals_list_kb(users_with_referrals)
+        reply_markup=get_referrals_list_kb(users_with_referrals, pending_withdrawals=pending_withdrawals)
     )
 
 
@@ -4459,9 +4464,14 @@ async def admin_referrals_page(callback: CallbackQuery):
         result = await session.execute(stmt)
         all_users = result.scalars().all()
         users_with_referrals = [u for u in all_users if (u.referrals and len(u.referrals) > 0) or u.referral_balance > 0]
+        
+        # Считаем заявки на вывод
+        stmt_w = select(func.count()).select_from(WithdrawalRequest).where(WithdrawalRequest.status == "pending")
+        result_w = await session.execute(stmt_w)
+        pending_withdrawals = result_w.scalar()
     
     await callback.message.edit_reply_markup(
-        reply_markup=get_referrals_list_kb(users_with_referrals, page)
+        reply_markup=get_referrals_list_kb(users_with_referrals, page, pending_withdrawals=pending_withdrawals)
     )
 
 
@@ -4823,6 +4833,8 @@ async def bot_settings_detail(callback: CallbackQuery):
     
     await callback.message.edit_text(
         f"🤖 *Настройки бота @{bot.username}*\n\n"
+        f"ℹ️ _Персональные настройки этого бота._\n"
+        f"_Имеют приоритет над общими настройками._\n\n"
         f"🔑 Пароль: {pwd_text}\n"
         f"📢 Канал: {channel_text}\n"
         f"📱 Запрос телефона: {phone_text}\n"
