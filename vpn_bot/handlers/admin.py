@@ -215,12 +215,18 @@ async def admin_user_stats(callback: CallbackQuery):
     for user in users:
         user_info = f"@{user.username}" if user.username else user.full_name[:12]
         
-        # Считаем трафик по конфигам пользователя
+        # Считаем трафик по конфигам пользователя (накопительный + текущий)
         user_traffic = 0
         for config in user.configs:
+            # Накопительный трафик из БД
+            user_traffic += (config.total_received or 0) + (config.total_sent or 0)
+            # Плюс текущий трафик с сервера (если есть и больше накопленного)
             if config.public_key in all_traffic:
                 stats = all_traffic[config.public_key]
-                user_traffic += stats.get('received', 0) + stats.get('sent', 0)
+                current = stats.get('received', 0) + stats.get('sent', 0)
+                saved = (config.total_received or 0) + (config.total_sent or 0)
+                if current > saved:
+                    user_traffic = user_traffic - saved + current
         
         traffic_str = format_bytes(user_traffic) if user_traffic else "0 B"
         
@@ -265,13 +271,15 @@ async def admin_user_stats(callback: CallbackQuery):
     
     # Пагинация
     total_pages = (len(active_lines) + per_page - 1) // per_page
+    if total_pages == 0:
+        total_pages = 1
     start = page * per_page
     end = start + per_page
     page_users = active_lines[start:end]
     
-    # Формируем текст
+    # Формируем текст (без Markdown чтобы не ломались username с _)
     auto_status = "✅ вкл" if auto_delete else "❌ выкл"
-    text = f"📊 *Статистика пользователей*\n"
+    text = f"📊 Статистика пользователей\n"
     text += f"🗑 Автоудаление неактивных: {auto_status}\n\n"
     text += "Имя | 📱 | Трафик | Оплаты | Подписка\n"
     text += "─" * 32 + "\n"
@@ -283,7 +291,7 @@ async def admin_user_stats(callback: CallbackQuery):
         text += f"\n📄 Страница {page + 1}/{total_pages}"
     
     if inactive_lines:
-        text += f"\n\n⚠️ *Неактивные ({len(inactive_lines)}):*\n"
+        text += f"\n\n⚠️ Неактивные ({len(inactive_lines)}):\n"
         for line in inactive_lines[:3]:
             text += f"{line}\n"
         if len(inactive_lines) > 3:
@@ -293,7 +301,7 @@ async def admin_user_stats(callback: CallbackQuery):
     
     await callback.message.edit_text(
         text,
-        parse_mode="Markdown",
+        parse_mode=None,
         reply_markup=get_user_stats_kb(auto_delete, page, total_pages)
     )
 

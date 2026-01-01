@@ -86,6 +86,11 @@ class Config(Base):
     client_ip: Mapped[str] = mapped_column(String(50), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    
+    # Накопительный трафик (сохраняется периодически)
+    total_received: Mapped[int] = mapped_column(BigInteger, default=0)  # входящий трафик в байтах
+    total_sent: Mapped[int] = mapped_column(BigInteger, default=0)  # исходящий трафик в байтах
+    last_traffic_update: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # когда последний раз обновляли
 
     user: Mapped["User"] = relationship("User", back_populates="configs")
     server: Mapped[Optional["Server"]] = relationship("Server", back_populates="configs")

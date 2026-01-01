@@ -65,6 +65,13 @@ class SchedulerService:
             replace_existing=True
         )
         
+        self.scheduler.add_job(
+            self.update_traffic_stats,
+            IntervalTrigger(minutes=30),
+            id="update_traffic",
+            replace_existing=True
+        )
+        
         self.scheduler.start()
         logger.info("Планировщик запущен")
     
@@ -272,3 +279,65 @@ class SchedulerService:
                 logger.info("Подозрительная активность не обнаружена")
         except Exception as e:
             logger.error(f"Ошибка проверки подозрительной активности: {e}")
+    
+    async def update_traffic_stats(self):
+        """Обновляет накопительную статистику трафика для всех конфигов"""
+        logger.info("Обновление статистики трафика...")
+        
+        try:
+            from services.traffic import get_server_traffic
+            
+            async with async_session() as session:
+                # Получаем все активные серверы
+                servers_stmt = select(Server).where(Server.is_active == True)
+                servers_result = await session.execute(servers_stmt)
+                servers = servers_result.scalars().all()
+                
+                # Собираем трафик со всех серверов
+                all_traffic = {}
+                for server in servers:
+                    try:
+                        server_traffic = await get_server_traffic(server)
+                        if server_traffic:
+                            all_traffic.update(server_traffic)
+                    except Exception as e:
+                        logger.error(f"Ошибка получения трафика с сервера {server.name}: {e}")
+                
+                if not all_traffic:
+                    logger.info("Нет данных о трафике для обновления")
+                    return
+                
+                # Получаем все активные конфиги
+                configs_stmt = select(Config).where(Config.is_active == True)
+                configs_result = await session.execute(configs_stmt)
+                configs = configs_result.scalars().all()
+                
+                updated_count = 0
+                for config in configs:
+                    if config.public_key in all_traffic:
+                        stats = all_traffic[config.public_key]
+                        current_received = stats.get('received', 0)
+                        current_sent = stats.get('sent', 0)
+                        
+                        # Если текущий трафик больше сохранённого — обновляем
+                        # (трафик может сброситься при перезапуске WG, поэтому берём максимум)
+                        if current_received > 0 or current_sent > 0:
+                            # Если текущий трафик меньше сохранённого — значит WG перезапустился
+                            # В этом случае добавляем текущий к накопленному
+                            if current_received < config.total_received or current_sent < config.total_sent:
+                                # WG перезапустился, добавляем текущий трафик
+                                config.total_received += current_received
+                                config.total_sent += current_sent
+                            else:
+                                # Обычное обновление — берём максимум
+                                config.total_received = max(config.total_received, current_received)
+                                config.total_sent = max(config.total_sent, current_sent)
+                            
+                            config.last_traffic_update = datetime.utcnow()
+                            updated_count += 1
+                
+                await session.commit()
+                logger.info(f"Обновлена статистика трафика для {updated_count} конфигов")
+                
+        except Exception as e:
+            logger.error(f"Ошибка обновления статистики трафика: {e}")
