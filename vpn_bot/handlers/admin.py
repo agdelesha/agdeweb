@@ -25,8 +25,10 @@ from keyboards.admin_kb import (
     get_user_max_configs_cancel_kb, get_server_clients_kb, get_server_broadcast_cancel_kb,
     get_server_user_detail_kb, get_server_user_configs_kb, get_server_config_detail_kb,
     get_referrals_list_kb, get_referral_detail_kb,
-    get_referral_percent_cancel_kb, get_withdrawal_review_kb, get_withdrawals_list_kb
+    get_referral_percent_cancel_kb, get_withdrawal_review_kb, get_withdrawals_list_kb,
+    get_user_stats_kb, get_inactive_user_kb
 )
+from database.models import BotSettings
 from keyboards.user_kb import get_main_menu_kb
 from services.wireguard import WireGuardService
 from services.traffic import format_bytes, get_config_traffic, get_server_traffic
@@ -99,13 +101,18 @@ async def cmd_admin(message: Message):
         stmt_w = select(func.count()).select_from(WithdrawalRequest).where(WithdrawalRequest.status == "pending")
         result_w = await session.execute(stmt_w)
         pending_withdrawals = result_w.scalar()
+        
+        # Счётчик неактивных пользователей
+        stmt_inactive = select(func.count()).select_from(User).where(User.failed_notifications >= 3)
+        result_inactive = await session.execute(stmt_inactive)
+        inactive_count = result_inactive.scalar()
     
     queue_count = await ConfigQueueService.get_waiting_count()
     
     await message.answer(
         "🔧 *Админ-панель*\n\nВыбери действие:",
         parse_mode="Markdown",
-        reply_markup=get_admin_menu_kb(pending_count, pending_withdrawals, queue_count)
+        reply_markup=get_admin_menu_kb(pending_count, pending_withdrawals, queue_count, inactive_count)
     )
 
 
@@ -126,14 +133,183 @@ async def admin_menu(callback: CallbackQuery):
         stmt_w = select(func.count()).select_from(WithdrawalRequest).where(WithdrawalRequest.status == "pending")
         result_w = await session.execute(stmt_w)
         pending_withdrawals = result_w.scalar()
+        
+        # Счётчик неактивных пользователей
+        stmt_inactive = select(func.count()).select_from(User).where(User.failed_notifications >= 3)
+        result_inactive = await session.execute(stmt_inactive)
+        inactive_count = result_inactive.scalar()
     
     queue_count = await ConfigQueueService.get_waiting_count()
     
     await callback.message.edit_text(
         "🔧 *Админ-панель*\n\nВыбери действие:",
         parse_mode="Markdown",
-        reply_markup=get_admin_menu_kb(pending_count, pending_withdrawals, queue_count)
+        reply_markup=get_admin_menu_kb(pending_count, pending_withdrawals, queue_count, inactive_count)
     )
+
+
+@router.callback_query(F.data == "admin_user_stats")
+async def admin_user_stats(callback: CallbackQuery):
+    """Статистика пользователей: трафик, оплаты, дни до конца, неактивные"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    await callback.answer()
+    
+    async with async_session() as session:
+        # Получаем всех пользователей с подписками и платежами
+        stmt = select(User).options(
+            selectinload(User.subscriptions),
+            selectinload(User.payments),
+            selectinload(User.configs)
+        ).order_by(User.total_traffic.desc())
+        result = await session.execute(stmt)
+        users = result.scalars().all()
+        
+        # Получаем настройку автоудаления
+        stmt_setting = select(BotSettings).where(BotSettings.key == "auto_delete_inactive")
+        result_setting = await session.execute(stmt_setting)
+        setting = result_setting.scalar_one_or_none()
+        auto_delete = setting and setting.value == "true"
+    
+    # Формируем списки
+    active_users = []
+    inactive_users = []
+    
+    for user in users:
+        user_info = f"@{user.username}" if user.username else user.full_name[:15]
+        traffic = format_bytes(user.total_traffic) if user.total_traffic else "0 B"
+        
+        # Считаем оплаты
+        approved_payments = [p for p in user.payments if p.status == "approved"]
+        total_paid = sum(p.amount for p in approved_payments)
+        
+        # Дни до конца подписки
+        days_left = "∞"
+        active_sub = None
+        for sub in user.subscriptions:
+            if sub.expires_at is None:
+                days_left = "∞"
+                active_sub = sub
+                break
+            if sub.expires_at > datetime.utcnow():
+                if active_sub is None or sub.expires_at > active_sub.expires_at:
+                    active_sub = sub
+        
+        if active_sub and active_sub.expires_at:
+            days = (active_sub.expires_at - datetime.utcnow()).days
+            days_left = f"{days}д" if days >= 0 else "0д"
+        elif not active_sub:
+            days_left = "—"
+        
+        line = f"{user_info} | {traffic} | {total_paid}₽ | {days_left}"
+        
+        if user.failed_notifications >= 3:
+            inactive_users.append(f"⚠️ {line}")
+        else:
+            active_users.append(f"👤 {line}")
+    
+    # Формируем текст
+    text = "📊 *Статистика пользователей*\n\n"
+    text += "Имя | Трафик | Оплаты | Подписка\n"
+    text += "─" * 30 + "\n"
+    
+    # Показываем топ-15 по трафику
+    for line in active_users[:15]:
+        text += f"{line}\n"
+    
+    if len(active_users) > 15:
+        text += f"\n... и ещё {len(active_users) - 15} пользователей\n"
+    
+    if inactive_users:
+        text += f"\n⚠️ *Неактивные ({len(inactive_users)}):*\n"
+        for line in inactive_users[:5]:
+            text += f"{line}\n"
+        if len(inactive_users) > 5:
+            text += f"... и ещё {len(inactive_users) - 5}\n"
+    
+    text += f"\n📈 Всего: {len(users)} пользователей"
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=get_user_stats_kb(auto_delete)
+    )
+
+
+@router.callback_query(F.data == "admin_toggle_auto_delete")
+async def admin_toggle_auto_delete(callback: CallbackQuery):
+    """Переключение автоудаления неактивных пользователей"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    async with async_session() as session:
+        stmt = select(BotSettings).where(BotSettings.key == "auto_delete_inactive")
+        result = await session.execute(stmt)
+        setting = result.scalar_one_or_none()
+        
+        if setting:
+            new_value = "false" if setting.value == "true" else "true"
+            setting.value = new_value
+        else:
+            setting = BotSettings(key="auto_delete_inactive", value="true")
+            session.add(setting)
+            new_value = "true"
+        
+        await session.commit()
+    
+    status = "включено ✅" if new_value == "true" else "выключено ❌"
+    await callback.answer(f"Автоудаление {status}")
+    
+    # Обновляем страницу
+    await admin_user_stats(callback)
+
+
+@router.callback_query(F.data == "admin_delete_inactive")
+async def admin_delete_inactive(callback: CallbackQuery):
+    """Удаление всех неактивных пользователей"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    deleted_count = 0
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.failed_notifications >= 3).options(selectinload(User.configs))
+        result = await session.execute(stmt)
+        inactive_users = result.scalars().all()
+        
+        for user in inactive_users:
+            # Удаляем конфиги с серверов
+            for config in user.configs:
+                if config.server_id:
+                    server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+                    if server:
+                        await WireGuardMultiService.delete_config(config.name, server, config.public_key)
+                else:
+                    await WireGuardService.delete_config(config.name)
+            
+            await session.delete(user)
+            deleted_count += 1
+        
+        await session.commit()
+    
+    await callback.answer(f"🗑 Удалено {deleted_count} неактивных пользователей")
+    
+    # Обновляем страницу
+    await admin_user_stats(callback)
+
+
+@router.callback_query(F.data == "close_message")
+async def close_message(callback: CallbackQuery):
+    """Закрыть сообщение"""
+    await callback.answer()
+    try:
+        await callback.message.delete()
+    except:
+        pass
 
 
 @router.callback_query(F.data == "admin_config_queue")

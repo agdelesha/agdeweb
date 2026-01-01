@@ -60,6 +60,10 @@ class User(Base):
     referral_balance: Mapped[float] = mapped_column(Float, default=0.0)  # накопленный баланс от рефералов
     referral_percent: Mapped[float] = mapped_column(Float, default=10.0)  # % от оплат рефералов
     first_payment_done: Mapped[bool] = mapped_column(Boolean, default=False)  # была ли первая оплата (для скидки 50%)
+    
+    # Отслеживание неактивности
+    failed_notifications: Mapped[int] = mapped_column(Integer, default=0)  # счётчик неудачных уведомлений (chat not found)
+    total_traffic: Mapped[int] = mapped_column(BigInteger, default=0)  # общий трафик в байтах
 
     configs: Mapped[List["Config"]] = relationship("Config", back_populates="user", cascade="all, delete-orphan")
     subscriptions: Mapped[List["Subscription"]] = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
@@ -193,3 +197,14 @@ class LogChannel(Base):
     system_logs: Mapped[bool] = mapped_column(Boolean, default=False)  # Серверные логи (journald)
     aiogram_logs: Mapped[bool] = mapped_column(Boolean, default=False)  # Логи aiogram (ошибки сети и т.д.)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class BotSettings(Base):
+    """Глобальные настройки бота"""
+    __tablename__ = "bot_settings"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    value: Mapped[str] = mapped_column(String(255), nullable=True)
+    
+    # Настройки по умолчанию создаются при первом запуске

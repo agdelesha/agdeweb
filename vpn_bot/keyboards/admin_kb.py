@@ -1,15 +1,17 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
-def get_admin_menu_kb(pending_count: int = 0, pending_withdrawals: int = 0, queue_count: int = 0) -> InlineKeyboardMarkup:
+def get_admin_menu_kb(pending_count: int = 0, pending_withdrawals: int = 0, queue_count: int = 0, inactive_count: int = 0) -> InlineKeyboardMarkup:
     pending_badge = f" ({pending_count})" if pending_count > 0 else ""
     withdrawal_badge = f" ({pending_withdrawals})" if pending_withdrawals > 0 else ""
     queue_badge = f" ({queue_count})" if queue_count > 0 else ""
+    inactive_badge = f" ({inactive_count})" if inactive_count > 0 else ""
     buttons = [
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users")],
         [InlineKeyboardButton(text=f"💰 Ожидают оплаты{pending_badge}", callback_data="admin_pending_payments")],
         [InlineKeyboardButton(text=f"💸 Заявки на вывод{withdrawal_badge}", callback_data="admin_withdrawals")],
         [InlineKeyboardButton(text=f"⏳ Очередь конфигов{queue_badge}", callback_data="admin_config_queue")],
+        [InlineKeyboardButton(text=f"📊 Статистика пользователей{inactive_badge}", callback_data="admin_user_stats")],
         [InlineKeyboardButton(text="👥 Рефералы", callback_data="admin_referrals")],
         [InlineKeyboardButton(text="🖥 Серверы", callback_data="admin_servers")],
         [InlineKeyboardButton(text="🤖 Боты", callback_data="settings_bots")],
@@ -696,4 +698,24 @@ def get_log_add_cancel_kb() -> InlineKeyboardMarkup:
     """Клавиатура отмены при добавлении канала"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_logs")]
+    ])
+
+
+def get_inactive_user_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура для неактивного пользователя"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data=f"admin_confirm_delete_{user_id}")],
+        [InlineKeyboardButton(text="👤 Подробнее", callback_data=f"admin_user_{user_id}")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="close_message")]
+    ])
+
+
+def get_user_stats_kb(auto_delete: bool = False) -> InlineKeyboardMarkup:
+    """Клавиатура для страницы статистики пользователей"""
+    auto_delete_text = "✅ Автоудаление неактивных" if auto_delete else "❌ Автоудаление неактивных"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_user_stats")],
+        [InlineKeyboardButton(text="🗑 Удалить неактивных", callback_data="admin_delete_inactive")],
+        [InlineKeyboardButton(text=auto_delete_text, callback_data="admin_toggle_auto_delete")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")]
     ])
