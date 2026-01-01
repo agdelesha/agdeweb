@@ -367,7 +367,7 @@ async def admin_user_configs(callback: CallbackQuery):
     )
 
 
-@router.callback_query(F.data.startswith("admin_config_"))
+@router.callback_query(F.data.startswith("admin_config_") & ~F.data.startswith("admin_config_queue"))
 async def admin_config_detail(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
@@ -513,7 +513,7 @@ async def admin_delete_config(callback: CallbackQuery):
         if config.server_id:
             server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
             if server:
-                await WireGuardMultiService.delete_config(config_name, server)
+                await WireGuardMultiService.delete_config(config_name, server, config.public_key)
         else:
             await WireGuardService.delete_config(config_name)
         
@@ -1401,7 +1401,7 @@ async def admin_confirm_delete(callback: CallbackQuery):
             if config.server_id:
                 server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
                 if server:
-                    await WireGuardMultiService.delete_config(config.name, server)
+                    await WireGuardMultiService.delete_config(config.name, server, config.public_key)
             else:
                 await WireGuardService.delete_config(config.name)
         
@@ -4090,7 +4090,7 @@ async def admin_delete_server_config(callback: CallbackQuery):
             if config.server_id:
                 cfg_server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
                 if cfg_server:
-                    await WireGuardMultiService.delete_config(config_name, cfg_server)
+                    await WireGuardMultiService.delete_config(config_name, cfg_server, config.public_key)
             else:
                 await WireGuardService.delete_config(config_name)
         

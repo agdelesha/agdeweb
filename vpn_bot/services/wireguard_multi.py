@@ -280,7 +280,7 @@ class WireGuardMultiService:
             return None
     
     @classmethod
-    async def delete_config(cls, username: str, server: Server) -> Tuple[bool, str]:
+    async def delete_config(cls, username: str, server: Server, public_key: str = None) -> Tuple[bool, str]:
         """Удалить конфиг с сервера"""
         
         if LOCAL_MODE:
@@ -289,13 +289,28 @@ class WireGuardMultiService:
         
         logger.info(f"Удаление конфига {username} с сервера {server.name}")
         
+        # Сначала отключаем пир из активного WireGuard (если есть public_key)
+        if public_key:
+            logger.info(f"Отключение пира {public_key[:20]}... перед удалением")
+            await cls._ssh_execute(
+                server,
+                f"wg set {server.wg_interface} peer {public_key} remove"
+            )
+        
+        # Затем удаляем файлы конфига через скрипт
         success, stdout, stderr = await cls._ssh_execute(
             server,
             f"{server.remove_script} {username}"
         )
         
+        # Сохраняем конфигурацию WireGuard
+        await cls._ssh_execute(server, f"wg-quick save {server.wg_interface}")
+        
         if success:
+            logger.info(f"Конфиг {username} успешно удалён с сервера {server.name}")
             return True, f"Конфиг удален с сервера {server.name}"
+        
+        logger.error(f"Ошибка удаления конфига {username} с {server.name}: {stderr}")
         return False, stderr or "Ошибка удаления"
     
     @classmethod

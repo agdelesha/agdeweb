@@ -1668,8 +1668,8 @@ async def config_detail(callback: CallbackQuery):
         traffic_text = ""
         if config.public_key and not server_deleted:
             # Получаем трафик с правильного сервера
-            if config.server_id and cfg_server:
-                traffic_stats = await WireGuardMultiService.get_traffic_stats(cfg_server)
+            if config.server_id and server:
+                traffic_stats = await WireGuardMultiService.get_traffic_stats(server)
             else:
                 traffic_stats = await WireGuardService.get_traffic_stats()
             
