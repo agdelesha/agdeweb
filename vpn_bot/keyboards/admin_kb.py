@@ -9,10 +9,9 @@ def get_admin_menu_kb(pending_count: int = 0, pending_withdrawals: int = 0, queu
     buttons = [
         [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users")],
         [InlineKeyboardButton(text=f"💰 Ожидают оплаты{pending_badge}", callback_data="admin_pending_payments")],
-        [InlineKeyboardButton(text=f"⏳ Очередь конфигов{queue_badge}", callback_data="admin_config_queue")],
         [InlineKeyboardButton(text=f"📊 Статистика пользователей{inactive_badge}", callback_data="admin_user_stats")],
         [InlineKeyboardButton(text=f"👥 Рефералы{withdrawal_badge}", callback_data="admin_referrals")],
-        [InlineKeyboardButton(text="🖥 Серверы", callback_data="admin_servers")],
+        [InlineKeyboardButton(text=f"🖥 Серверы{queue_badge}", callback_data="admin_servers")],
         [InlineKeyboardButton(text="🤖 Боты", callback_data="settings_bots")],
         [InlineKeyboardButton(text="💵 Цены", callback_data="admin_prices")],
         [InlineKeyboardButton(text="✉️ Сообщение", callback_data="admin_broadcast")],
@@ -241,9 +240,17 @@ def get_monitoring_settings_kb(is_enabled: bool) -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton(text="📊 Порог трафика", callback_data="settings_monitoring_traffic")],
         [InlineKeyboardButton(text="📱 Порог конфигов", callback_data="settings_monitoring_configs")],
+        [InlineKeyboardButton(text="📅 Период проверки", callback_data="settings_monitoring_period")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_user_stats")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_monitoring_period_cancel_kb() -> InlineKeyboardMarkup:
+    """Кнопка отмены при вводе периода мониторинга"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="settings_monitoring")]
+    ])
 
 
 def get_broadcast_menu_kb() -> InlineKeyboardMarkup:
@@ -286,7 +293,7 @@ def get_broadcast_users_kb(users: list, page: int = 0, per_page: int = 10) -> In
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_servers_list_kb(servers: list, client_counts: dict = None) -> InlineKeyboardMarkup:
+def get_servers_list_kb(servers: list, client_counts: dict = None, queue_count: int = 0) -> InlineKeyboardMarkup:
     """Клавиатура списка серверов"""
     buttons = []
     client_counts = client_counts or {}
@@ -300,6 +307,8 @@ def get_servers_list_kb(servers: list, client_counts: dict = None) -> InlineKeyb
         )])
     
     buttons.append([InlineKeyboardButton(text="➕ Добавить сервер", callback_data="admin_server_add")])
+    queue_badge = f" ({queue_count})" if queue_count > 0 else ""
+    buttons.append([InlineKeyboardButton(text=f"⏳ Очередь конфигов{queue_badge}", callback_data="admin_config_queue")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

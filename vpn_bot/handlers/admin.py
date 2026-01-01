@@ -404,7 +404,7 @@ async def admin_config_queue(callback: CallbackQuery, bot: Bot):
             "Очередь пуста — все пользователи получили свои конфиги!",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")]
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_servers")]
             ])
         )
         return
@@ -422,7 +422,7 @@ async def admin_config_queue(callback: CallbackQuery, bot: Bot):
     
     buttons = [
         [InlineKeyboardButton(text="🔄 Обработать очередь", callback_data="admin_process_queue")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")]
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_servers")]
     ]
     
     await callback.message.edit_text(
@@ -455,7 +455,7 @@ async def admin_process_queue(callback: CallbackQuery, bot: Bot):
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⏳ Очередь", callback_data="admin_config_queue")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")]
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_servers")]
         ])
     )
 
@@ -2448,6 +2448,7 @@ async def settings_monitoring(callback: CallbackQuery):
     monitoring_enabled = await get_setting("monitoring_enabled") != "0"
     traffic_threshold = await get_setting("monitoring_traffic_gb") or "50"
     configs_threshold = await get_setting("monitoring_configs") or "3"
+    period_days = await get_setting("monitoring_period_days") or "1"
     
     status = "🟢 Включён" if monitoring_enabled else "🔴 Выключен"
     
@@ -2455,7 +2456,8 @@ async def settings_monitoring(callback: CallbackQuery):
         f"📊 *Настройки мониторинга*\n\n"
         f"Статус: {status}\n"
         f"Порог трафика: *{traffic_threshold} GB*\n"
-        f"Порог конфигов: *{configs_threshold}*\n\n"
+        f"Порог конфигов: *{configs_threshold}*\n"
+        f"Период проверки: *{period_days} дн.*\n\n"
         f"_Мониторинг проверяет подозрительную активность каждые 6 часов_",
         parse_mode="Markdown",
         reply_markup=get_monitoring_settings_kb(monitoring_enabled)
@@ -2472,12 +2474,14 @@ async def settings_monitoring_on(callback: CallbackQuery):
     
     traffic_threshold = await get_setting("monitoring_traffic_gb") or "50"
     configs_threshold = await get_setting("monitoring_configs") or "3"
+    period_days = await get_setting("monitoring_period_days") or "1"
     
     await callback.message.edit_text(
         f"📊 *Настройки мониторинга*\n\n"
         f"Статус: 🟢 Включён\n"
         f"Порог трафика: *{traffic_threshold} GB*\n"
-        f"Порог конфигов: *{configs_threshold}*\n\n"
+        f"Порог конфигов: *{configs_threshold}*\n"
+        f"Период проверки: *{period_days} дн.*\n\n"
         f"_Мониторинг проверяет подозрительную активность каждые 6 часов_",
         parse_mode="Markdown",
         reply_markup=get_monitoring_settings_kb(True)
@@ -2494,12 +2498,14 @@ async def settings_monitoring_off(callback: CallbackQuery):
     
     traffic_threshold = await get_setting("monitoring_traffic_gb") or "50"
     configs_threshold = await get_setting("monitoring_configs") or "3"
+    period_days = await get_setting("monitoring_period_days") or "1"
     
     await callback.message.edit_text(
         f"📊 *Настройки мониторинга*\n\n"
         f"Статус: 🔴 Выключен\n"
         f"Порог трафика: *{traffic_threshold} GB*\n"
-        f"Порог конфигов: *{configs_threshold}*\n\n"
+        f"Порог конфигов: *{configs_threshold}*\n"
+        f"Период проверки: *{period_days} дн.*\n\n"
         f"_Мониторинг проверяет подозрительную активность каждые 6 часов_",
         parse_mode="Markdown",
         reply_markup=get_monitoring_settings_kb(False)
@@ -2598,6 +2604,86 @@ async def process_configs_threshold(message: Message, state: FSMContext):
         )
     except ValueError:
         await message.answer("❌ Введите число")
+
+
+@router.callback_query(F.data == "settings_monitoring_period")
+async def settings_monitoring_period(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    current = await get_setting("monitoring_period_days") or "1"
+    
+    from keyboards.admin_kb import get_monitoring_period_cancel_kb
+    
+    await state.set_state(AdminStates.waiting_for_monitoring_period)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
+    
+    await callback.message.edit_text(
+        f"📅 *Период проверки мониторинга*\n\n"
+        f"Текущее значение: *{current} дн.*\n\n"
+        f"ℹ️ _Трафик проверяется за указанный период._\n"
+        f"_Если пользователь превысил порог за этот период — админ получит уведомление._\n\n"
+        f"Введите количество дней (от 1 до 30):",
+        parse_mode="Markdown",
+        reply_markup=get_monitoring_period_cancel_kb()
+    )
+
+
+@router.message(AdminStates.waiting_for_monitoring_period)
+async def process_monitoring_period(message: Message, state: FSMContext, bot: Bot):
+    if not is_admin(message.from_user.id):
+        return
+    
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    
+    try:
+        value = int(message.text.strip())
+        if value < 1 or value > 30:
+            from keyboards.admin_kb import get_monitoring_period_cancel_kb
+            await message.answer(
+                "❌ Значение должно быть от 1 до 30 дней",
+                reply_markup=get_monitoring_period_cancel_kb()
+            )
+            return
+        
+        # Удаляем сообщение с кнопкой "отмена"
+        if prompt_msg_id:
+            try:
+                await bot.delete_message(message.chat.id, prompt_msg_id)
+            except:
+                pass
+        
+        await set_setting("monitoring_period_days", str(value))
+        await state.clear()
+        
+        # Удаляем сообщение пользователя
+        try:
+            await message.delete()
+        except:
+            pass
+        
+        monitoring_enabled = await get_setting("monitoring_enabled") != "0"
+        traffic_threshold = await get_setting("monitoring_traffic_gb") or "50"
+        configs_threshold = await get_setting("monitoring_configs") or "3"
+        
+        await message.answer(
+            f"✅ Период проверки изменён на *{value} дн.*\n\n"
+            f"📊 *Настройки мониторинга*\n\n"
+            f"Статус: {'🟢 Включён' if monitoring_enabled else '🔴 Выключен'}\n"
+            f"Порог трафика: *{traffic_threshold} GB*\n"
+            f"Порог конфигов: *{configs_threshold}*\n"
+            f"Период проверки: *{value} дн.*",
+            parse_mode="Markdown",
+            reply_markup=get_monitoring_settings_kb(monitoring_enabled)
+        )
+    except ValueError:
+        from keyboards.admin_kb import get_monitoring_period_cancel_kb
+        await message.answer(
+            "❌ Введите число",
+            reply_markup=get_monitoring_period_cancel_kb()
+        )
 
 
 @router.callback_query(F.data == "admin_broadcast")
@@ -2849,6 +2935,9 @@ async def admin_servers_list(callback: CallbackQuery, state: FSMContext):
     
     await state.clear()  # Сбрасываем состояние при возврате к списку
     await callback.answer()
+    
+    from services.config_queue import ConfigQueueService
+    
     async with async_session() as session:
         servers = await WireGuardMultiService.get_all_servers(session)
         
@@ -2858,6 +2947,9 @@ async def admin_servers_list(callback: CallbackQuery, state: FSMContext):
             count = await WireGuardMultiService.get_server_client_count(session, server.id)
             client_counts[server.id] = count
     
+    # Получаем количество в очереди
+    queue_count = await ConfigQueueService.get_waiting_count()
+    
     if not servers:
         text = "🖥 *Серверы*\n\nСерверов пока нет. Добавьте первый сервер."
     else:
@@ -2866,7 +2958,7 @@ async def admin_servers_list(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         text,
         parse_mode="Markdown",
-        reply_markup=get_servers_list_kb(servers, client_counts)
+        reply_markup=get_servers_list_kb(servers, client_counts, queue_count)
     )
 
 
