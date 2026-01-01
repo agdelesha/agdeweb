@@ -5436,15 +5436,40 @@ async def log_toggle_channel(callback: CallbackQuery):
     channel_id = int(callback.data.replace("log_toggle_", ""))
     
     from services.telegram_logger import toggle_log_channel
+    from database.models import LogChannel
+    from keyboards.admin_kb import get_log_channel_kb
     
     new_state = await toggle_log_channel(channel_id)
     if new_state is not None:
         status = "включён" if new_state else "отключён"
         await callback.answer(f"Канал {status}")
     
-    # Обновляем отображение
-    callback.data = f"log_channel_{channel_id}"
-    await log_channel_detail(callback)
+    # Перезагружаем детали канала
+    async with async_session() as session:
+        stmt = select(LogChannel).where(LogChannel.id == channel_id)
+        result = await session.execute(stmt)
+        channel = result.scalar_one_or_none()
+        
+        if channel:
+            status = "🟢 Активен" if channel.is_active else "🔴 Отключён"
+            title = channel.title or f"ID: {channel.chat_id}"
+            bot_logs = getattr(channel, 'bot_logs', True)
+            system_logs = getattr(channel, 'system_logs', False)
+            aiogram_logs = getattr(channel, 'aiogram_logs', False)
+            
+            await callback.message.edit_text(
+                f"📝 *Канал логов*\n\n"
+                f"📌 Название: {title}\n"
+                f"🆔 ID: `{channel.chat_id}`\n"
+                f"📊 Уровень: {channel.log_level}\n"
+                f"Статус: {status}\n\n"
+                f"*Типы логов:*\n"
+                f"📦 Логи бота: {'✅' if bot_logs else '❌'}\n"
+                f"🖥 Серверные: {'✅' if system_logs else '❌'}\n"
+                f"🤖 Сетевые: {'✅' if aiogram_logs else '❌'}",
+                parse_mode="Markdown",
+                reply_markup=get_log_channel_kb(channel.id, channel.is_active, bot_logs, system_logs, aiogram_logs)
+            )
 
 
 @router.callback_query(F.data.startswith("log_level_"))
@@ -5480,13 +5505,38 @@ async def log_set_level(callback: CallbackQuery):
     level = parts[3]
     
     from services.telegram_logger import set_log_level
+    from database.models import LogChannel
+    from keyboards.admin_kb import get_log_channel_kb
     
     if await set_log_level(channel_id, level):
         await callback.answer(f"Уровень установлен: {level}")
     
-    # Возвращаемся к деталям канала
-    callback.data = f"log_channel_{channel_id}"
-    await log_channel_detail(callback)
+    # Перезагружаем детали канала
+    async with async_session() as session:
+        stmt = select(LogChannel).where(LogChannel.id == channel_id)
+        result = await session.execute(stmt)
+        channel = result.scalar_one_or_none()
+        
+        if channel:
+            status = "🟢 Активен" if channel.is_active else "🔴 Отключён"
+            title = channel.title or f"ID: {channel.chat_id}"
+            bot_logs = getattr(channel, 'bot_logs', True)
+            system_logs = getattr(channel, 'system_logs', False)
+            aiogram_logs = getattr(channel, 'aiogram_logs', False)
+            
+            await callback.message.edit_text(
+                f"📝 *Канал логов*\n\n"
+                f"📌 Название: {title}\n"
+                f"🆔 ID: `{channel.chat_id}`\n"
+                f"📊 Уровень: {channel.log_level}\n"
+                f"Статус: {status}\n\n"
+                f"*Типы логов:*\n"
+                f"📦 Логи бота: {'✅' if bot_logs else '❌'}\n"
+                f"🖥 Серверные: {'✅' if system_logs else '❌'}\n"
+                f"🤖 Сетевые: {'✅' if aiogram_logs else '❌'}",
+                parse_mode="Markdown",
+                reply_markup=get_log_channel_kb(channel.id, channel.is_active, bot_logs, system_logs, aiogram_logs)
+            )
 
 
 @router.callback_query(F.data.startswith("log_type_"))
@@ -5501,6 +5551,8 @@ async def log_toggle_type(callback: CallbackQuery):
     log_type = "_".join(parts[3:])  # bot_logs, system_logs, aiogram_logs
     
     from services.telegram_logger import toggle_log_type
+    from database.models import LogChannel
+    from keyboards.admin_kb import get_log_channel_kb
     
     new_state = await toggle_log_type(channel_id, log_type)
     if new_state is not None:
@@ -5512,9 +5564,32 @@ async def log_toggle_type(callback: CallbackQuery):
         status = "включены" if new_state else "отключены"
         await callback.answer(f"{type_names.get(log_type, log_type)} {status}")
     
-    # Обновляем отображение
-    callback.data = f"log_channel_{channel_id}"
-    await log_channel_detail(callback)
+    # Перезагружаем детали канала
+    async with async_session() as session:
+        stmt = select(LogChannel).where(LogChannel.id == channel_id)
+        result = await session.execute(stmt)
+        channel = result.scalar_one_or_none()
+        
+        if channel:
+            status = "🟢 Активен" if channel.is_active else "🔴 Отключён"
+            title = channel.title or f"ID: {channel.chat_id}"
+            bot_logs = getattr(channel, 'bot_logs', True)
+            system_logs = getattr(channel, 'system_logs', False)
+            aiogram_logs = getattr(channel, 'aiogram_logs', False)
+            
+            await callback.message.edit_text(
+                f"📝 *Канал логов*\n\n"
+                f"📌 Название: {title}\n"
+                f"🆔 ID: `{channel.chat_id}`\n"
+                f"📊 Уровень: {channel.log_level}\n"
+                f"Статус: {status}\n\n"
+                f"*Типы логов:*\n"
+                f"📦 Логи бота: {'✅' if bot_logs else '❌'}\n"
+                f"🖥 Серверные: {'✅' if system_logs else '❌'}\n"
+                f"🤖 Сетевые: {'✅' if aiogram_logs else '❌'}",
+                parse_mode="Markdown",
+                reply_markup=get_log_channel_kb(channel.id, channel.is_active, bot_logs, system_logs, aiogram_logs)
+            )
 
 
 @router.callback_query(F.data.startswith("log_delete_"))
