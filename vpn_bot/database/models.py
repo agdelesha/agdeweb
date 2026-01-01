@@ -53,6 +53,7 @@ class User(Base):
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
     how_to_seen: Mapped[bool] = mapped_column(Boolean, default=False)
     max_configs: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # индивидуальный лимит конфигов (None = глобальный)
+    registration_complete: Mapped[bool] = mapped_column(Boolean, default=False)  # прошёл ли все этапы регистрации
     
     # Реферальная система
     referrer_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)  # кто пригласил

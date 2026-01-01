@@ -123,6 +123,17 @@ async def set_user_how_to_seen(telegram_id: int) -> None:
             await session.commit()
 
 
+async def mark_registration_complete(telegram_id: int) -> None:
+    """Отмечает регистрацию пользователя завершённой"""
+    async with async_session() as session:
+        stmt = select(User).where(User.telegram_id == telegram_id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        if user:
+            user.registration_complete = True
+            await session.commit()
+
+
 async def check_channel_subscription(bot: Bot, user_id: int, bot_id: int = None) -> bool:
     """Проверка подписки на канал. bot_id - для получения канала конкретного бота"""
     try:
@@ -321,7 +332,10 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
             parse_mode="Markdown"
         )
     
-    if is_new:
+    # Проверяем, завершена ли регистрация (новый пользователь или не завершил регистрацию)
+    needs_registration = is_new or not getattr(user, 'registration_complete', True)
+    
+    if needs_registration:
         # Проверяем, нужен ли пароль (индивидуально для бота)
         if await is_password_required(bot_id):
             msg = await message.answer(
@@ -362,7 +376,8 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
             await state.set_state(RegistrationStates.waiting_for_phone)
             return
         
-        # Телефон не требуется — показываем воронку
+        # Телефон не требуется — отмечаем регистрацию завершённой и показываем воронку
+        await mark_registration_complete(message.from_user.id)
         msg = await message.answer(
             f"Привет! 👋\n"
             f"Я помогу тебе подключиться к сервису\n\n"
@@ -499,7 +514,8 @@ async def check_subscription_callback(callback: CallbackQuery, state: FSMContext
             await save_bot_message(state, msg.message_id)
             await state.set_state(RegistrationStates.waiting_for_phone)
         else:
-            # Телефон не требуется — сразу в главное меню
+            # Телефон не требуется — отмечаем регистрацию завершённой и в главное меню
+            await mark_registration_complete(callback.from_user.id)
             await state.clear()
             await callback.message.edit_text(
                 "✅ Подписка подтверждена!\n\n"
@@ -554,6 +570,7 @@ async def process_phone_contact(message: Message, state: FSMContext, bot: Bot):
         user = result.scalar_one_or_none()
         if user:
             user.phone = phone
+            user.registration_complete = True  # Отмечаем регистрацию завершённой
             await session.commit()
     
     # Отправляем главное меню с удалением Reply клавиатуры
@@ -584,6 +601,7 @@ async def skip_phone(message: Message, state: FSMContext, bot: Bot):
         user = result.scalar_one_or_none()
         if user:
             user.phone = "5553535"
+            user.registration_complete = True  # Отмечаем регистрацию завершённой
             await session.commit()
     
     # Отправляем главное меню с удалением Reply клавиатуры
