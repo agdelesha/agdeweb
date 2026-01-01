@@ -1666,7 +1666,12 @@ async def config_detail(callback: CallbackQuery):
         
         traffic_text = ""
         if config.public_key and not server_deleted:
-            traffic_stats = await WireGuardService.get_traffic_stats()
+            # Получаем трафик с правильного сервера
+            if config.server_id and cfg_server:
+                traffic_stats = await WireGuardMultiService.get_traffic_stats(cfg_server)
+            else:
+                traffic_stats = await WireGuardService.get_traffic_stats()
+            
             if config.public_key in traffic_stats:
                 stats = traffic_stats[config.public_key]
                 received = WireGuardService.format_bytes(stats['received'])
@@ -1867,9 +1872,24 @@ async def my_subscription(callback: CallbackQuery):
         
         total_received = 0
         total_sent = 0
-        traffic_stats = await WireGuardService.get_traffic_stats()
+        # Собираем трафик со всех серверов
+        server_traffic_cache = {}
         for config in user.configs:
-            if config.public_key and config.public_key in traffic_stats:
+            if not config.public_key:
+                continue
+            
+            if config.server_id:
+                if config.server_id not in server_traffic_cache:
+                    cfg_server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+                    if cfg_server:
+                        server_traffic_cache[config.server_id] = await WireGuardMultiService.get_traffic_stats(cfg_server)
+                    else:
+                        server_traffic_cache[config.server_id] = {}
+                traffic_stats = server_traffic_cache[config.server_id]
+            else:
+                traffic_stats = await WireGuardService.get_traffic_stats()
+            
+            if config.public_key in traffic_stats:
                 stats = traffic_stats[config.public_key]
                 total_received += stats['received']
                 total_sent += stats['sent']

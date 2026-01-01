@@ -508,7 +508,13 @@ async def admin_delete_config(callback: CallbackQuery):
         user_id = config.user_id
         config_name = config.name
         
-        success, msg = await WireGuardService.delete_config(config_name)
+        # Удаляем с правильного сервера
+        if config.server_id:
+            server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+            if server:
+                await WireGuardMultiService.delete_config(config_name, server)
+        else:
+            await WireGuardService.delete_config(config_name)
         
         await session.delete(config)
         await session.commit()
@@ -4078,9 +4084,14 @@ async def admin_delete_server_config(callback: CallbackQuery):
         user_id = config.user_id
         config_name = config.name
         
-        # Удаляем с WireGuard сервера
+        # Удаляем с правильного сервера
         if not LOCAL_MODE:
-            await WireGuardService.delete_config(config.public_key, config_name)
+            if config.server_id:
+                cfg_server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+                if cfg_server:
+                    await WireGuardMultiService.delete_config(config_name, cfg_server)
+            else:
+                await WireGuardService.delete_config(config_name)
         
         # Удаляем из БД
         await session.delete(config)

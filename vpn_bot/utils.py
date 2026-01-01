@@ -72,6 +72,15 @@ async def update_bot_setting(bot_id: int, key: str, value) -> bool:
         return False
 
 
+def format_bytes(size: int) -> str:
+    """Форматирует размер в байтах в человекочитаемый формат"""
+    for unit in ['B', 'KiB', 'MiB', 'GiB']:
+        if size < 1024:
+            return f"{size:.2f} {unit}"
+        size /= 1024
+    return f"{size:.2f} TiB"
+
+
 def transliterate_ru_to_en(text: str) -> str:
     """Транслитерация русских букв в английские"""
     translit_map = {

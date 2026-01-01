@@ -4,8 +4,9 @@ from typing import Dict, List, Tuple
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from database import async_session, User, Config, Settings
+from database import async_session, User, Config, Settings, Server
 from services.wireguard import WireGuardService
+from services.wireguard_multi import WireGuardMultiService
 from config import ADMIN_ID
 
 logger = logging.getLogger(__name__)
@@ -82,50 +83,57 @@ class MonitoringService:
         # Получаем порог из настроек
         traffic_threshold = await cls.get_traffic_threshold()
         
-        # Получаем текущую статистику трафика
-        current_stats = await WireGuardService.get_traffic_stats()
-        
-        if not current_stats:
-            return alerts
-        
-        # Получаем все конфиги из БД
         async with async_session() as session:
+            # Получаем все конфиги из БД
             stmt = select(Config).options(selectinload(Config.user))
             result = await session.execute(stmt)
             configs = result.scalars().all()
             
-            # Создаём маппинг public_key -> config
-            config_map = {c.public_key: c for c in configs}
-        
-        for public_key, stats in current_stats.items():
-            if public_key not in config_map:
-                continue
+            # Собираем трафик со всех серверов
+            server_traffic_cache = {}
             
-            config = config_map[public_key]
-            user = config.user
-            
-            if not user:
-                continue
-            
-            # Считаем общий трафик (received + sent)
-            total_bytes = stats.get('received', 0) + stats.get('sent', 0)
-            total_gb = total_bytes / (1024 ** 3)
-            
-            # Проверяем превышение порога
-            if total_gb > traffic_threshold:
-                # Проверяем, не отправляли ли уже алерт
-                if cls._can_send_alert(user.id, 'traffic'):
-                    alerts.append({
-                        'type': 'traffic_abuse',
-                        'user_id': user.id,
-                        'telegram_id': user.telegram_id,
-                        'username': user.username or user.full_name,
-                        'config_name': config.name,
-                        'traffic_gb': round(total_gb, 2),
-                        'threshold_gb': traffic_threshold,
-                        'reason': f"Трафик конфига {config.name} превысил {traffic_threshold} GB"
-                    })
-                    cls._mark_alert_sent(user.id, 'traffic')
+            for config in configs:
+                if not config.public_key or not config.user:
+                    continue
+                
+                user = config.user
+                
+                # Получаем трафик с правильного сервера
+                if config.server_id:
+                    if config.server_id not in server_traffic_cache:
+                        server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+                        if server:
+                            server_traffic_cache[config.server_id] = await WireGuardMultiService.get_traffic_stats(server)
+                        else:
+                            server_traffic_cache[config.server_id] = {}
+                    traffic_stats = server_traffic_cache[config.server_id]
+                else:
+                    traffic_stats = await WireGuardService.get_traffic_stats()
+                
+                if config.public_key not in traffic_stats:
+                    continue
+                
+                stats = traffic_stats[config.public_key]
+                
+                # Считаем общий трафик (received + sent)
+                total_bytes = stats.get('received', 0) + stats.get('sent', 0)
+                total_gb = total_bytes / (1024 ** 3)
+                
+                # Проверяем превышение порога
+                if total_gb > traffic_threshold:
+                    # Проверяем, не отправляли ли уже алерт
+                    if cls._can_send_alert(user.id, 'traffic'):
+                        alerts.append({
+                            'type': 'traffic_abuse',
+                            'user_id': user.id,
+                            'telegram_id': user.telegram_id,
+                            'username': user.username or user.full_name,
+                            'config_name': config.name,
+                            'traffic_gb': round(total_gb, 2),
+                            'threshold_gb': traffic_threshold,
+                            'reason': f"Трафик конфига {config.name} превысил {traffic_threshold} GB"
+                        })
+                        cls._mark_alert_sent(user.id, 'traffic')
         
         return alerts
     
