@@ -757,15 +757,15 @@ async def admin_payment_detail(callback: CallbackQuery, bot: Bot):
         callback.from_user.id,
         payment.receipt_file_id,
         caption=(
-            f"💰 *Платёж #{payment.id}*\n\n"
+            f"💰 Платёж #{payment.id}\n\n"
             f"👤 Пользователь: {username}\n"
-            f"🆔 ID: `{user.telegram_id}`\n"
+            f"🆔 ID: {user.telegram_id}\n"
             f"📋 Тариф: {tariff.get('name', payment.tariff_type)}\n"
             f"💵 Сумма: {payment.amount}₽\n"
             f"📅 Дата: {format_datetime_moscow(payment.created_at)}"
             f"{ocr_text}"
         ),
-        parse_mode="Markdown",
+        parse_mode=None,
         reply_markup=get_payment_review_kb(payment.id)
     )
     

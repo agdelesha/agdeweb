@@ -1395,7 +1395,7 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
     
     user_info = f"@{user_username}" if user_username else message.from_user.full_name
-    phone_info = f"📞 Телефон: `{user_phone}`" if user_phone and user_phone != "5553535" else "📞 Телефон: не указан"
+    phone_info = f"📞 Телефон: {user_phone}" if user_phone and user_phone != "5553535" else "📞 Телефон: не указан"
     
     if amount_matched:
         days = tariff.get("days", 30)
@@ -1510,9 +1510,9 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
             ADMIN_ID,
             photo.file_id,
             caption=(
-                f"✅ *Платёж подтверждён автоматически*\n\n"
+                f"✅ Платёж подтверждён автоматически\n\n"
                 f"👤 Пользователь: {user_info}\n"
-                f"🆔 ID: `{user_telegram_id}`\n"
+                f"🆔 ID: {user_telegram_id}\n"
                 f"{phone_info}\n"
                 f"📋 Тариф: {tariff['name']}\n"
                 f"{discount_info}"
@@ -1520,7 +1520,7 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
                 f"{referral_info}\n"
                 f"{ocr_text}"
             ),
-            parse_mode="Markdown"
+            parse_mode=None
         )
     else:
         has_sub = await check_has_subscription(user_telegram_id)
@@ -1538,9 +1538,9 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
             ADMIN_ID,
             photo.file_id,
             caption=(
-                f"💰 *Новый платёж (требует проверки)*\n\n"
+                f"💰 Новый платёж (требует проверки)\n\n"
                 f"👤 Пользователь: {user_info}\n"
-                f"🆔 ID: `{user_telegram_id}`\n"
+                f"🆔 ID: {user_telegram_id}\n"
                 f"{phone_info}\n"
                 f"📋 Тариф: {tariff['name']}\n"
                 f"{discount_info}"
@@ -1548,7 +1548,7 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
                 f"{referral_info}\n"
                 f"{ocr_text}"
             ),
-            parse_mode="Markdown",
+            parse_mode=None,
             reply_markup=get_payment_review_kb(payment_id)
         )
 
@@ -1602,13 +1602,13 @@ async def process_receipt_document(message: Message, state: FSMContext, bot: Bot
     await state.clear()
     
     user_info = f"@{user_username}" if user_username else message.from_user.full_name
-    phone_info = f"📞 Телефон: `{user_phone}`" if user_phone and user_phone != "5553535" else "📞 Телефон: не указан"
+    phone_info = f"📞 Телефон: {user_phone}" if user_phone and user_phone != "5553535" else "📞 Телефон: не указан"
     
     has_sub = await check_has_subscription(user_telegram_id)
     await message.answer(
-        "✅ *Документ получен!*\n\n"
+        "✅ Документ получен!\n\n"
         "Мы проверим его вручную и скоро напишем!",
-        parse_mode="Markdown",
+        parse_mode=None,
         reply_markup=get_main_menu_kb(user_telegram_id, has_sub)
     )
     
@@ -1617,15 +1617,15 @@ async def process_receipt_document(message: Message, state: FSMContext, bot: Bot
         ADMIN_ID,
         document.file_id,
         caption=(
-            f"📄 *Новый платёж (документ, требует проверки)*\n\n"
+            f"📄 Новый платёж (документ, требует проверки)\n\n"
             f"👤 Пользователь: {user_info}\n"
-            f"🆔 ID: `{user_telegram_id}`\n"
+            f"🆔 ID: {user_telegram_id}\n"
             f"{phone_info}\n"
             f"📋 Тариф: {tariff['name']}\n"
             f"💵 Сумма: {tariff['price']}₽\n\n"
             f"📎 Файл: {document.file_name or 'без имени'}"
         ),
-        parse_mode="Markdown",
+        parse_mode=None,
         reply_markup=get_payment_review_kb(payment_id)
     )
 
