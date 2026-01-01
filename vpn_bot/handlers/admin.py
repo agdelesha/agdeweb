@@ -148,7 +148,7 @@ async def admin_menu(callback: CallbackQuery):
     )
 
 
-@router.callback_query(F.data == "admin_user_stats")
+@router.callback_query(F.data.startswith("admin_user_stats"))
 async def admin_user_stats(callback: CallbackQuery):
     """Статистика пользователей: трафик, оплаты, дни до конца, неактивные"""
     if not is_admin(callback.from_user.id):
@@ -157,13 +157,23 @@ async def admin_user_stats(callback: CallbackQuery):
     
     await callback.answer()
     
+    # Получаем номер страницы из callback_data
+    page = 0
+    if "_page_" in callback.data:
+        try:
+            page = int(callback.data.split("_page_")[1])
+        except:
+            page = 0
+    
+    per_page = 15
+    
     async with async_session() as session:
         # Получаем всех пользователей с подписками и платежами
         stmt = select(User).options(
             selectinload(User.subscriptions),
             selectinload(User.payments),
             selectinload(User.configs)
-        ).order_by(User.total_traffic.desc())
+        ).order_by(User.created_at.desc())
         result = await session.execute(stmt)
         users = result.scalars().all()
         
@@ -172,18 +182,54 @@ async def admin_user_stats(callback: CallbackQuery):
         result_setting = await session.execute(stmt_setting)
         setting = result_setting.scalar_one_or_none()
         auto_delete = setting and setting.value == "true"
+        
+        # Получаем трафик со всех серверов
+        all_traffic = {}
+        try:
+            servers_stmt = select(Server).where(Server.is_active == True)
+            servers_result = await session.execute(servers_stmt)
+            servers = servers_result.scalars().all()
+            
+            for server in servers:
+                try:
+                    server_traffic = await get_server_traffic(server)
+                    if server_traffic:
+                        all_traffic.update(server_traffic)
+                except:
+                    pass
+            
+            # Также локальный сервер
+            try:
+                local_traffic = await WireGuardService.get_traffic_stats()
+                if local_traffic:
+                    all_traffic.update(local_traffic)
+            except:
+                pass
+        except:
+            pass
     
-    # Формируем списки
-    active_users = []
+    # Формируем списки с трафиком
+    user_stats = []
     inactive_users = []
     
     for user in users:
-        user_info = f"@{user.username}" if user.username else user.full_name[:15]
-        traffic = format_bytes(user.total_traffic) if user.total_traffic else "0 B"
+        user_info = f"@{user.username}" if user.username else user.full_name[:12]
+        
+        # Считаем трафик по конфигам пользователя
+        user_traffic = 0
+        for config in user.configs:
+            if config.public_key in all_traffic:
+                stats = all_traffic[config.public_key]
+                user_traffic += stats.get('received', 0) + stats.get('sent', 0)
+        
+        traffic_str = format_bytes(user_traffic) if user_traffic else "0 B"
         
         # Считаем оплаты
         approved_payments = [p for p in user.payments if p.status == "approved"]
         total_paid = sum(p.amount for p in approved_payments)
+        
+        # Количество конфигов
+        configs_count = len(user.configs)
         
         # Дни до конца подписки
         days_left = "∞"
@@ -203,38 +249,52 @@ async def admin_user_stats(callback: CallbackQuery):
         elif not active_sub:
             days_left = "—"
         
-        line = f"{user_info} | {traffic} | {total_paid}₽ | {days_left}"
+        line = f"{user_info} | {configs_count}📱 | {traffic_str} | {total_paid}₽ | {days_left}"
         
         if user.failed_notifications >= 3:
-            inactive_users.append(f"⚠️ {line}")
+            inactive_users.append((user_traffic, f"⚠️ {line}"))
         else:
-            active_users.append(f"👤 {line}")
+            user_stats.append((user_traffic, f"👤 {line}"))
+    
+    # Сортируем по трафику (убывание)
+    user_stats.sort(key=lambda x: x[0], reverse=True)
+    inactive_users.sort(key=lambda x: x[0], reverse=True)
+    
+    active_lines = [line for _, line in user_stats]
+    inactive_lines = [line for _, line in inactive_users]
+    
+    # Пагинация
+    total_pages = (len(active_lines) + per_page - 1) // per_page
+    start = page * per_page
+    end = start + per_page
+    page_users = active_lines[start:end]
     
     # Формируем текст
-    text = "📊 *Статистика пользователей*\n\n"
-    text += "Имя | Трафик | Оплаты | Подписка\n"
-    text += "─" * 30 + "\n"
+    auto_status = "✅ вкл" if auto_delete else "❌ выкл"
+    text = f"📊 *Статистика пользователей*\n"
+    text += f"🗑 Автоудаление неактивных: {auto_status}\n\n"
+    text += "Имя | 📱 | Трафик | Оплаты | Подписка\n"
+    text += "─" * 32 + "\n"
     
-    # Показываем топ-15 по трафику
-    for line in active_users[:15]:
+    for line in page_users:
         text += f"{line}\n"
     
-    if len(active_users) > 15:
-        text += f"\n... и ещё {len(active_users) - 15} пользователей\n"
+    if total_pages > 1:
+        text += f"\n📄 Страница {page + 1}/{total_pages}"
     
-    if inactive_users:
-        text += f"\n⚠️ *Неактивные ({len(inactive_users)}):*\n"
-        for line in inactive_users[:5]:
+    if inactive_lines:
+        text += f"\n\n⚠️ *Неактивные ({len(inactive_lines)}):*\n"
+        for line in inactive_lines[:3]:
             text += f"{line}\n"
-        if len(inactive_users) > 5:
-            text += f"... и ещё {len(inactive_users) - 5}\n"
+        if len(inactive_lines) > 3:
+            text += f"... и ещё {len(inactive_lines) - 3}\n"
     
     text += f"\n📈 Всего: {len(users)} пользователей"
     
     await callback.message.edit_text(
         text,
         parse_mode="Markdown",
-        reply_markup=get_user_stats_kb(auto_delete)
+        reply_markup=get_user_stats_kb(auto_delete, page, total_pages)
     )
 
 

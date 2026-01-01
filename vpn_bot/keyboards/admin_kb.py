@@ -710,12 +710,25 @@ def get_inactive_user_kb(user_id: int) -> InlineKeyboardMarkup:
     ])
 
 
-def get_user_stats_kb(auto_delete: bool = False) -> InlineKeyboardMarkup:
+def get_user_stats_kb(auto_delete: bool = False, page: int = 0, total_pages: int = 1) -> InlineKeyboardMarkup:
     """Клавиатура для страницы статистики пользователей"""
     auto_delete_text = "✅ Автоудаление неактивных" if auto_delete else "❌ Автоудаление неактивных"
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_user_stats")],
-        [InlineKeyboardButton(text="🗑 Удалить неактивных", callback_data="admin_delete_inactive")],
-        [InlineKeyboardButton(text=auto_delete_text, callback_data="admin_toggle_auto_delete")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")]
-    ])
+    
+    buttons = []
+    
+    # Кнопки пагинации
+    if total_pages > 1:
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"admin_user_stats_page_{page - 1}"))
+        if page < total_pages - 1:
+            nav_buttons.append(InlineKeyboardButton(text="Далее ▶️", callback_data=f"admin_user_stats_page_{page + 1}"))
+        if nav_buttons:
+            buttons.append(nav_buttons)
+    
+    buttons.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_user_stats")])
+    buttons.append([InlineKeyboardButton(text="🗑 Удалить неактивных", callback_data="admin_delete_inactive")])
+    buttons.append([InlineKeyboardButton(text=auto_delete_text, callback_data="admin_toggle_auto_delete")])
+    buttons.append([InlineKeyboardButton(text="◀️ В меню", callback_data="admin_menu")])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
