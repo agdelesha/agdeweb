@@ -947,13 +947,32 @@ async def admin_approve_payment(callback: CallbackQuery, bot: Bot):
     
     await callback.answer("✅ Платёж подтверждён")
     
+    # Удаляем сообщение с платежом
     try:
-        await callback.message.edit_caption(
-            caption=callback.message.caption + "\n\n✅ *ПОДТВЕРЖДЕНО*",
-            parse_mode="Markdown"
-        )
+        await callback.message.delete()
     except:
         pass
+    
+    # Возвращаемся к списку платежей
+    async with async_session() as session:
+        stmt = select(Payment).where(Payment.status == "pending").options(
+            selectinload(Payment.user)
+        ).order_by(Payment.created_at.desc())
+        result = await session.execute(stmt)
+        payments = result.scalars().all()
+    
+    if not payments:
+        await bot.send_message(
+            callback.from_user.id,
+            "✅ Нет платежей, ожидающих проверки",
+            reply_markup=get_admin_menu_kb()
+        )
+    else:
+        await bot.send_message(
+            callback.from_user.id,
+            f"💰 Ожидают проверки ({len(payments)}):",
+            reply_markup=get_pending_payments_kb(payments)
+        )
     
     try:
         msg_text = (
@@ -1025,27 +1044,49 @@ async def admin_reject_payment(callback: CallbackQuery, bot: Bot):
         payment.processed_at = datetime.utcnow()
         await session.commit()
         
+        user_telegram_id = payment.user.telegram_id
+        
         await callback.answer("❌ Платёж отклонён")
         
+        # Удаляем сообщение с платежом
         try:
-            await callback.message.edit_caption(
-                caption=callback.message.caption + "\n\n❌ *ОТКЛОНЕНО*",
-                parse_mode="Markdown"
-            )
+            await callback.message.delete()
         except:
             pass
         
+        # Уведомляем пользователя
         try:
             await bot.send_message(
-                payment.user.telegram_id,
-                "❌ *Платёж отклонён*\n\n"
+                user_telegram_id,
+                "❌ Платёж отклонён\n\n"
                 "Чек не прошёл проверку.\n"
                 "Если ты уверен, что оплата была — напиши нам, разберёмся!",
-                parse_mode="Markdown",
-                reply_markup=get_main_menu_kb(payment.user.telegram_id, False)
+                parse_mode=None,
+                reply_markup=get_main_menu_kb(user_telegram_id, False)
             )
         except Exception as e:
             logger.error(f"Ошибка отправки уведомления: {e}")
+    
+    # Возвращаемся к списку платежей
+    async with async_session() as session:
+        stmt = select(Payment).where(Payment.status == "pending").options(
+            selectinload(Payment.user)
+        ).order_by(Payment.created_at.desc())
+        result = await session.execute(stmt)
+        payments = result.scalars().all()
+    
+    if not payments:
+        await bot.send_message(
+            callback.from_user.id,
+            "✅ Нет платежей, ожидающих проверки",
+            reply_markup=get_admin_menu_kb()
+        )
+    else:
+        await bot.send_message(
+            callback.from_user.id,
+            f"💰 Ожидают проверки ({len(payments)}):",
+            reply_markup=get_pending_payments_kb(payments)
+        )
 
 
 @router.callback_query(F.data.startswith("admin_delete_payment_"))
