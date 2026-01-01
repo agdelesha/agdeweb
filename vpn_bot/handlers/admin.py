@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.orm import selectinload
