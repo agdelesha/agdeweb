@@ -123,15 +123,12 @@ async def set_user_how_to_seen(telegram_id: int) -> None:
             await session.commit()
 
 
-async def get_channel_name() -> str:
-    """Получить название канала из настроек"""
-    from services.settings import get_setting
-    return await get_setting("channel_name") or CHANNEL_USERNAME
-
-
-async def check_channel_subscription(bot: Bot, user_id: int) -> bool:
+async def check_channel_subscription(bot: Bot, user_id: int, bot_id: int = None) -> bool:
+    """Проверка подписки на канал. bot_id - для получения канала конкретного бота"""
     try:
-        channel = await get_channel_name()
+        channel = await get_channel_name(bot_id)
+        if not channel:
+            return True  # Если канал не настроен - пропускаем проверку
         member = await bot.get_chat_member(f"@{channel}", user_id)
         return member.status in ["member", "administrator", "creator"]
     except Exception as e:
@@ -338,7 +335,7 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         
         # Проверяем подписку на канал (индивидуально для бота)
         if await is_channel_required(bot_id):
-            is_subscribed = await check_channel_subscription(bot, message.from_user.id)
+            is_subscribed = await check_channel_subscription(bot, message.from_user.id, bot_id)
             if not is_subscribed:
                 channel = await get_channel_name(bot_id)
                 msg = await message.answer(
@@ -431,7 +428,7 @@ async def process_password(message: Message, state: FSMContext, bot: Bot):
     
     # Пароль верный, проверяем подписку на канал
     if await is_channel_required(bot_id):
-        is_subscribed = await check_channel_subscription(bot, message.from_user.id)
+        is_subscribed = await check_channel_subscription(bot, message.from_user.id, bot_id)
         if not is_subscribed:
             channel = await get_channel_name(bot_id)
             msg = await message.answer(
@@ -471,12 +468,6 @@ async def process_password(message: Message, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data == "check_subscription")
 async def check_subscription_callback(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    is_subscribed = await check_channel_subscription(bot, callback.from_user.id)
-    
-    if not is_subscribed:
-        await callback.answer("❌ Ты не подписан на канал!", show_alert=True)
-        return
-    
     # Получаем ID бота для индивидуальных настроек
     bot_info = await bot.get_me()
     bot_id = bot_info.id
@@ -485,6 +476,12 @@ async def check_subscription_callback(callback: CallbackQuery, state: FSMContext
     after_subscription = data.get("after_subscription")
     # Используем bot_id из state если есть, иначе текущий
     bot_id = data.get("bot_id", bot_id)
+    
+    is_subscribed = await check_channel_subscription(bot, callback.from_user.id, bot_id)
+    
+    if not is_subscribed:
+        await callback.answer("❌ Ты не подписан на канал!", show_alert=True)
+        return
     
     if after_subscription == "registration":
         # Проверяем, нужен ли запрос телефона
