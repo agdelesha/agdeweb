@@ -12,6 +12,19 @@ import os
 # Добавляем путь к проекту
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Мокаем зависимости которых может не быть локально
+class MockModule:
+    def __getattr__(self, name):
+        return MockModule()
+    def __call__(self, *args, **kwargs):
+        return MockModule()
+
+for mod in ['asyncssh', 'apscheduler', 'apscheduler.schedulers', 
+            'apscheduler.schedulers.asyncio', 'apscheduler.triggers',
+            'apscheduler.triggers.interval']:
+    if mod not in sys.modules:
+        sys.modules[mod] = MockModule()
+
 from datetime import datetime
 from typing import List, Tuple
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -25,8 +38,12 @@ class HandlerTester:
         """Тестирует что все callback handlers зарегистрированы"""
         print("\n🔍 Проверка callback handlers...")
         
-        from handlers.admin import router as admin_router
-        from handlers.user import router as user_router
+        try:
+            from handlers.admin import router as admin_router
+            from handlers.user import router as user_router
+        except ImportError as e:
+            print(f"  ⚠️ Пропущено (не все зависимости установлены): {e}")
+            return set(), set()
         
         # Собираем все callback_data из клавиатур
         from keyboards import admin_kb, user_kb
@@ -163,6 +180,11 @@ class HandlerTester:
         print("\n⏰ Проверка задач планировщика...")
         
         try:
+            # Мокаем asyncssh если его нет
+            import sys
+            if 'asyncssh' not in sys.modules:
+                sys.modules['asyncssh'] = type(sys)('asyncssh')
+            
             from services.scheduler import SchedulerService
             
             # Проверяем методы
