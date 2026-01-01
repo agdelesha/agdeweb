@@ -28,6 +28,7 @@ from keyboards.admin_kb import (
 )
 from keyboards.user_kb import get_main_menu_kb
 from services.wireguard import WireGuardService
+from services.traffic import format_bytes, get_config_traffic, get_server_traffic
 from services.wireguard_multi import WireGuardMultiService
 from services.settings import get_setting, set_setting
 from states.user_states import AdminStates
@@ -315,8 +316,8 @@ async def admin_user_detail(callback: CallbackQuery, state: FSMContext):
                 
                 if config.public_key in traffic_stats:
                     stats = traffic_stats[config.public_key]
-                    rx = WireGuardService.format_bytes(stats['received'])
-                    tx = WireGuardService.format_bytes(stats['sent'])
+                    rx = format_bytes(stats['received'])
+                    tx = format_bytes(stats['sent'])
                     traffic_info += f"\n📊 {config.name}: ⬇️{rx} ⬆️{tx}"
     
     username = f"@{user.username}" if user.username else "—"
@@ -401,8 +402,8 @@ async def admin_config_detail(callback: CallbackQuery):
             
             if config.public_key in traffic_stats:
                 stats = traffic_stats[config.public_key]
-                rx = WireGuardService.format_bytes(stats['received'])
-                tx = WireGuardService.format_bytes(stats['sent'])
+                rx = format_bytes(stats['received'])
+                tx = format_bytes(stats['sent'])
                 traffic_info = f"\n📊 Трафик: ⬇️{rx} ⬆️{tx}"
     
     await callback.message.edit_text(
@@ -3953,8 +3954,8 @@ async def admin_server_config_detail(callback: CallbackQuery):
             traffic_stats = await WireGuardMultiService.get_traffic_stats(cfg_server)
             if config.public_key in traffic_stats:
                 stats = traffic_stats[config.public_key]
-                rx = WireGuardService.format_bytes(stats['received'])
-                tx = WireGuardService.format_bytes(stats['sent'])
+                rx = format_bytes(stats['received'])
+                tx = format_bytes(stats['sent'])
                 traffic_info = f"\n📊 Трафик: ⬇️{rx} ⬆️{tx}"
         
         server_warning = ""

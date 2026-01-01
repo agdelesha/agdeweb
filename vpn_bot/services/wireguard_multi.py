@@ -305,10 +305,17 @@ class WireGuardMultiService:
         if LOCAL_MODE:
             return True, "Конфиг отключен (LOCAL_MODE)"
         
+        logger.info(f"Отключение конфига на сервере {server.name} (peer: {public_key[:20]}...)")
+        
         success, stdout, stderr = await cls._ssh_execute(
             server,
             f"wg set {server.wg_interface} peer {public_key} remove"
         )
+        
+        if success:
+            logger.info(f"Конфиг успешно отключен на {server.name}")
+        else:
+            logger.error(f"Ошибка отключения конфига на {server.name}: {stderr}")
         
         return success, "Конфиг отключен" if success else stderr
     
@@ -325,6 +332,8 @@ class WireGuardMultiService:
         if LOCAL_MODE:
             return True, "Конфиг включен (LOCAL_MODE)"
         
+        logger.info(f"Включение конфига на сервере {server.name} (peer: {public_key[:20]}...)")
+        
         # Создаём временный файл с preshared key и используем его
         # Убираем пробелы после запятых в allowed_ips (WireGuard их не понимает)
         allowed_ips_clean = allowed_ips.replace(", ", ",").replace(" ,", ",")
@@ -334,6 +343,11 @@ wg set {server.wg_interface} peer {public_key} preshared-key /tmp/psk_{public_ke
 rm /tmp/psk_{public_key[:8]}.key
 """
         success, stdout, stderr = await cls._ssh_execute(server, cmd)
+        
+        if success:
+            logger.info(f"Конфиг успешно включен на {server.name}")
+        else:
+            logger.error(f"Ошибка включения конфига на {server.name}: {stderr}")
         
         return success, "Конфиг включен" if success else stderr
     

@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from database import async_session, User, Config, Settings, Server
 from services.wireguard import WireGuardService
+from services.traffic import format_bytes, get_server_traffic
 from services.wireguard_multi import WireGuardMultiService
 from config import ADMIN_ID
 
@@ -249,15 +250,15 @@ class MonitoringService:
                 configs_info.append({
                     'name': config.name,
                     'is_active': config.is_active,
-                    'received': WireGuardService.format_bytes(received),
-                    'sent': WireGuardService.format_bytes(sent),
-                    'total': WireGuardService.format_bytes(total)
+                    'received': format_bytes(received),
+                    'sent': format_bytes(sent),
+                    'total': format_bytes(total)
                 })
             
             return {
                 'user': user,
                 'configs': configs_info,
-                'total_traffic': WireGuardService.format_bytes(total_traffic),
+                'total_traffic': format_bytes(total_traffic),
                 'config_count': len(user.configs),
                 'active_config_count': len([c for c in user.configs if c.is_active])
             }

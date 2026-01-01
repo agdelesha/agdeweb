@@ -21,6 +21,7 @@ from keyboards.user_kb import (
 )
 from states.user_states import PaymentStates, RegistrationStates, ConfigRequestStates, WithdrawalStates
 from services.wireguard import WireGuardService
+from services.traffic import format_bytes, get_config_traffic, get_user_total_traffic
 from services.wireguard_multi import WireGuardMultiService
 from services.ocr import OCRService
 from services.settings import is_password_required, is_channel_required, get_bot_password, is_phone_required, is_config_approval_required, get_setting, get_channel_name, get_max_configs, get_prices
@@ -1674,9 +1675,9 @@ async def config_detail(callback: CallbackQuery):
             
             if config.public_key in traffic_stats:
                 stats = traffic_stats[config.public_key]
-                received = WireGuardService.format_bytes(stats['received'])
-                sent = WireGuardService.format_bytes(stats['sent'])
-                total = WireGuardService.format_bytes(stats['received'] + stats['sent'])
+                received = format_bytes(stats['received'])
+                sent = format_bytes(stats['sent'])
+                total = format_bytes(stats['received'] + stats['sent'])
                 traffic_text = f"\n\n📊 *Трафик:*\n⬇️ Получено: {received}\n⬆️ Отправлено: {sent}\n📈 Всего: {total}"
         
         server_warning = ""
@@ -1894,7 +1895,7 @@ async def my_subscription(callback: CallbackQuery):
                 total_received += stats['received']
                 total_sent += stats['sent']
         
-        total_traffic = WireGuardService.format_bytes(total_received + total_sent)
+        total_traffic = format_bytes(total_received + total_sent)
         traffic_text = f"\n\n📊 *Общий трафик:* {total_traffic}" if (total_received + total_sent) > 0 else ""
         
         await callback.message.edit_text(

@@ -1,112 +1,24 @@
-import os
-import re
+"""
+WireGuardService - локальный сервис для работы с WireGuard
+DEPRECATED: Большинство методов заменены на WireGuardMultiService для мультисерверной архитектуры.
+Оставлены только методы для fallback (локальный сервер) и утилиты.
+"""
+
 import subprocess
 import logging
-from typing import Optional, Tuple, Dict
-from dataclasses import dataclass
+from typing import Tuple, Dict
 
-from config import (
-    WG_INTERFACE, WG_CONF, CLIENT_DIR, 
-    ADD_SCRIPT, REMOVE_SCRIPT, LOCAL_MODE
-)
+from config import WG_INTERFACE, CLIENT_DIR, REMOVE_SCRIPT, LOCAL_MODE
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ConfigData:
-    name: str
-    public_key: str
-    preshared_key: str
-    allowed_ips: str
-    client_ip: str
-    config_path: str
-    qr_path: str
-
-
 class WireGuardService:
-    
-    @classmethod
-    async def create_config(cls, username: str) -> Tuple[bool, Optional[ConfigData], str]:
-        if LOCAL_MODE:
-            logger.info(f"[LOCAL_MODE] Создание конфига для {username}")
-            return True, ConfigData(
-                name=username,
-                public_key="LOCAL_MODE_PUBLIC_KEY",
-                preshared_key="LOCAL_MODE_PSK",
-                allowed_ips="10.7.0.100/32",
-                client_ip="10.7.0.100",
-                config_path=f"/tmp/{username}.conf",
-                qr_path=f"/tmp/{username}.png"
-            ), "Конфиг создан (LOCAL_MODE)"
-        
-        try:
-            result = subprocess.run(
-                [ADD_SCRIPT, username],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            if result.returncode != 0:
-                logger.error(f"Ошибка создания конфига: {result.stderr}")
-                return False, None, result.stderr or "Неизвестная ошибка"
-            
-            config_path = f"{CLIENT_DIR}/{username}.conf"
-            qr_path = f"{CLIENT_DIR}/{username}.png"
-            
-            config_data = cls._parse_config_file(config_path, username)
-            if config_data:
-                return True, config_data, "Конфиг успешно создан"
-            else:
-                return False, None, "Не удалось прочитать созданный конфиг"
-                
-        except subprocess.TimeoutExpired:
-            return False, None, "Таймаут при создании конфига"
-        except Exception as e:
-            logger.error(f"Ошибка: {e}")
-            return False, None, str(e)
-    
-    @classmethod
-    def _parse_config_file(cls, config_path: str, username: str) -> Optional[ConfigData]:
-        try:
-            if not os.path.exists(WG_CONF):
-                return None
-            
-            with open(WG_CONF, 'r') as f:
-                wg_content = f.read()
-            
-            pattern = rf'# BEGIN_PEER {re.escape(username)}\n(.*?)# END_PEER {re.escape(username)}'
-            match = re.search(pattern, wg_content, re.DOTALL)
-            
-            if not match:
-                return None
-            
-            peer_block = match.group(1)
-            
-            pubkey_match = re.search(r'PublicKey\s*=\s*([a-zA-Z0-9+/=]+)', peer_block)
-            psk_match = re.search(r'PresharedKey\s*=\s*([a-zA-Z0-9+/=]+)', peer_block)
-            ips_match = re.search(r'AllowedIPs\s*=\s*([^\n]+)', peer_block)
-            
-            if not all([pubkey_match, psk_match, ips_match]):
-                return None
-            
-            allowed_ips = ips_match.group(1).strip()
-            client_ip = allowed_ips.split('/')[0].split(',')[0].strip()
-            
-            return ConfigData(
-                name=username,
-                public_key=pubkey_match.group(1),
-                preshared_key=psk_match.group(1),
-                allowed_ips=allowed_ips,
-                client_ip=client_ip,
-                config_path=config_path,
-                qr_path=f"{CLIENT_DIR}/{username}.png"
-            )
-            
-        except Exception as e:
-            logger.error(f"Ошибка парсинга конфига: {e}")
-            return None
+    """
+    Локальный WireGuard сервис.
+    Используется как fallback когда нет удалённых серверов.
+    Для мультисерверной архитектуры используйте WireGuardMultiService.
+    """
     
     @classmethod
     async def disable_config(cls, public_key: str) -> Tuple[bool, str]:
