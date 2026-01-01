@@ -240,6 +240,11 @@ class SchedulerService:
                 
                 await session.commit()
                 
+                # Удаляем истёкшую подписку чтобы не обрабатывать повторно
+                await session.delete(sub)
+                await session.commit()
+                logger.info(f"Истёкшая подписка #{sub.id} удалена для user_id={user.telegram_id}")
+                
                 try:
                     await self.bot.send_message(
                         user.telegram_id,
