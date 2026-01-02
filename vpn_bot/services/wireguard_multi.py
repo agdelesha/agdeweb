@@ -245,6 +245,15 @@ class WireGuardMultiService:
         return None
     
     @classmethod
+    async def fetch_qr_content(cls, config_name: str, server: Server) -> Optional[bytes]:
+        """Получить QR-код конфига с удалённого сервера"""
+        if LOCAL_MODE:
+            return None
+        
+        qr_path = f"{server.client_dir}/{config_name}.png"
+        return await cls._ssh_read_file(server, qr_path)
+    
+    @classmethod
     def _parse_peer_from_wg_conf(cls, wg_content: str, username: str) -> Optional[Dict[str, str]]:
         """Парсинг данных пира из wg0.conf"""
         try:

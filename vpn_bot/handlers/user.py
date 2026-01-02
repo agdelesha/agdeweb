@@ -1740,18 +1740,46 @@ async def download_config(callback: CallbackQuery, bot: Bot):
             await callback.answer("В локальном режиме файлы недоступны", show_alert=True)
             return
         
-        config_path = WireGuardService.get_config_file_path(config.name)
-        
-        if os.path.exists(config_path):
-            await bot.send_document(
-                callback.from_user.id,
-                FSInputFile(config_path),
-                caption=f"📄 Конфиг: {config.name}",
-                parse_mode=None
-            )
-            await callback.answer("✅ Конфиг отправлен")
+        # Проверяем, это конфиг с удалённого сервера или локальный
+        if config.server_id:
+            # Мультисервер — получаем конфиг по SSH
+            server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+            if not server:
+                await callback.answer("❌ Сервер не найден", show_alert=True)
+                return
+            
+            config_content = await WireGuardMultiService.fetch_config_content(config.name, server)
+            if config_content:
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as f:
+                    f.write(config_content)
+                    temp_path = f.name
+                try:
+                    await bot.send_document(
+                        callback.from_user.id,
+                        FSInputFile(temp_path, filename=f"{config.name}.conf"),
+                        caption=f"📄 Конфиг: {config.name}",
+                        parse_mode=None
+                    )
+                    await callback.answer("✅ Конфиг отправлен")
+                finally:
+                    os.unlink(temp_path)
+            else:
+                await callback.answer("❌ Не удалось получить конфиг с сервера", show_alert=True)
         else:
-            await callback.answer("❌ Файл конфига не найден", show_alert=True)
+            # Локальный сервер
+            config_path = WireGuardService.get_config_file_path(config.name)
+            
+            if os.path.exists(config_path):
+                await bot.send_document(
+                    callback.from_user.id,
+                    FSInputFile(config_path),
+                    caption=f"📄 Конфиг: {config.name}",
+                    parse_mode=None
+                )
+                await callback.answer("✅ Конфиг отправлен")
+            else:
+                await callback.answer("❌ Файл конфига не найден", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("qr_config_"))
@@ -1771,17 +1799,39 @@ async def qr_config(callback: CallbackQuery, bot: Bot):
             await callback.answer("В локальном режиме файлы недоступны", show_alert=True)
             return
         
-        qr_path = WireGuardService.get_qr_file_path(config.name)
-        
-        if os.path.exists(qr_path):
-            await bot.send_photo(
-                callback.from_user.id,
-                FSInputFile(qr_path),
-                caption=f"📷 QR-код: {config.name}"
-            )
-            await callback.answer("✅ QR-код отправлен")
+        # Проверяем, это конфиг с удалённого сервера или локальный
+        if config.server_id:
+            # Мультисервер — получаем QR по SSH
+            server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+            if not server:
+                await callback.answer("❌ Сервер не найден", show_alert=True)
+                return
+            
+            qr_content = await WireGuardMultiService.fetch_qr_content(config.name, server)
+            if qr_content:
+                import tempfile
+                from aiogram.types import BufferedInputFile
+                await bot.send_photo(
+                    callback.from_user.id,
+                    BufferedInputFile(qr_content, filename=f"{config.name}.png"),
+                    caption=f"📷 QR-код: {config.name}"
+                )
+                await callback.answer("✅ QR-код отправлен")
+            else:
+                await callback.answer("❌ Не удалось получить QR-код с сервера", show_alert=True)
         else:
-            await callback.answer("❌ QR-код не найден", show_alert=True)
+            # Локальный сервер
+            qr_path = WireGuardService.get_qr_file_path(config.name)
+            
+            if os.path.exists(qr_path):
+                await bot.send_photo(
+                    callback.from_user.id,
+                    FSInputFile(qr_path),
+                    caption=f"📷 QR-код: {config.name}"
+                )
+                await callback.answer("✅ QR-код отправлен")
+            else:
+                await callback.answer("❌ QR-код не найден", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("user_delete_config_"))
