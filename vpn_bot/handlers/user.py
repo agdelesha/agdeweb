@@ -2532,7 +2532,7 @@ async def referral_get_link(callback: CallbackQuery, bot: Bot):
     )
     
     # Отправляем ссылку отдельным сообщением для удобного копирования
-    await callback.message.answer(referral_link)
+    await callback.message.answer(referral_link, parse_mode=None)
 
 
 @router.callback_query(F.data == "referral_withdraw")

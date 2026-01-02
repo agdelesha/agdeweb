@@ -171,7 +171,8 @@ class SchedulerService:
                             f"🆔 ID: {db_user.telegram_id}\n"
                             f"❌ Неудачных уведомлений: {db_user.failed_notifications}\n\n"
                             f"Пользователь заблокировал бота или удалил аккаунт.",
-                            reply_markup=get_inactive_user_kb(db_user.id)
+                            reply_markup=get_inactive_user_kb(db_user.id),
+                            parse_mode=None
                         )
                     except Exception as e:
                         logger.error(f"Ошибка уведомления админа о неактивном пользователе: {e}")
