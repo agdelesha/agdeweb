@@ -245,6 +245,65 @@ class WireGuardMultiService:
         return None
     
     @classmethod
+    async def regenerate_config_file(cls, config_name: str, server: Server) -> Optional[str]:
+        """
+        Пересоздать файл конфига если он отсутствует на сервере.
+        Использует данные пира из wg0.conf для генерации клиентского конфига.
+        Возвращает содержимое конфига или None если не удалось.
+        """
+        if LOCAL_MODE:
+            return None
+        
+        logger.info(f"Попытка пересоздать конфиг {config_name} на сервере {server.name}")
+        
+        # Читаем wg0.conf чтобы получить данные пира
+        wg_conf_content = await cls._ssh_read_file(server, server.wg_conf_path)
+        if not wg_conf_content:
+            logger.error(f"Не удалось прочитать wg0.conf с {server.host}")
+            return None
+        
+        # Парсим данные пира
+        parsed = cls._parse_peer_from_wg_conf(wg_conf_content.decode('utf-8'), config_name)
+        if not parsed:
+            logger.error(f"Пир {config_name} не найден в wg0.conf на {server.host}")
+            return None
+        
+        # Получаем публичный ключ сервера
+        success, stdout, stderr = await cls._ssh_execute(
+            server,
+            "cat /etc/wireguard/server_public.key 2>/dev/null || wg show wg0 public-key"
+        )
+        if not success or not stdout.strip():
+            logger.error(f"Не удалось получить публичный ключ сервера {server.host}")
+            return None
+        server_public_key = stdout.strip().split('\n')[-1]
+        
+        # Генерируем приватный ключ клиента (нужен для конфига)
+        # К сожалению, приватный ключ клиента не хранится на сервере после создания
+        # Поэтому нужно пересоздать конфиг через скрипт
+        logger.info(f"Пересоздаём конфиг {config_name} через скрипт...")
+        
+        # Удаляем старый пир и создаём новый с тем же именем
+        # Это сохранит тот же IP адрес
+        success, stdout, stderr = await cls._ssh_execute(
+            server,
+            f"{server.add_script} {config_name}"
+        )
+        
+        if not success:
+            logger.error(f"Ошибка пересоздания конфига {config_name}: {stderr}")
+            return None
+        
+        # Читаем пересозданный конфиг
+        config_path = f"{server.client_dir}/{config_name}.conf"
+        content = await cls._ssh_read_file(server, config_path)
+        if content:
+            logger.info(f"Конфиг {config_name} успешно пересоздан на {server.name}")
+            return content.decode('utf-8')
+        
+        return None
+    
+    @classmethod
     async def fetch_qr_content(cls, config_name: str, server: Server) -> Optional[bytes]:
         """Получить QR-код конфига с удалённого сервера"""
         if LOCAL_MODE:

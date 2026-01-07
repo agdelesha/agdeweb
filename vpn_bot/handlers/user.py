@@ -1773,6 +1773,12 @@ async def download_config(callback: CallbackQuery, bot: Bot):
                 return
             
             config_content = await WireGuardMultiService.fetch_config_content(config.name, server)
+            
+            # Если файл не найден — пробуем пересоздать
+            if not config_content:
+                await callback.answer("⏳ Пересоздаю конфиг...", show_alert=False)
+                config_content = await WireGuardMultiService.regenerate_config_file(config.name, server)
+            
             if config_content:
                 import tempfile
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as f:
@@ -1832,6 +1838,14 @@ async def qr_config(callback: CallbackQuery, bot: Bot):
                 return
             
             qr_content = await WireGuardMultiService.fetch_qr_content(config.name, server)
+            
+            # Если QR не найден — пробуем пересоздать конфиг (QR создастся вместе с ним)
+            if not qr_content:
+                await callback.answer("⏳ Пересоздаю конфиг...", show_alert=False)
+                config_content = await WireGuardMultiService.regenerate_config_file(config.name, server)
+                if config_content:
+                    qr_content = await WireGuardMultiService.fetch_qr_content(config.name, server)
+            
             if qr_content:
                 import tempfile
                 from aiogram.types import BufferedInputFile
