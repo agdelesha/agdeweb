@@ -185,3 +185,9 @@ async def get_prices() -> dict:
 async def set_price(key: str, value: int):
     """Устанавливает цену"""
     await set_setting(key, str(value))
+
+
+async def get_referral_discount_percent() -> int:
+    """Получает % скидки для рефералов (по умолчанию 50%)"""
+    value = await get_setting("referral_discount_percent")
+    return int(float(value)) if value else 50

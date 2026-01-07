@@ -497,6 +497,7 @@ def get_referrals_list_kb(users: list, page: int = 0, per_page: int = 10, pendin
     withdrawal_badge = f" ({pending_withdrawals})" if pending_withdrawals > 0 else ""
     buttons.append([InlineKeyboardButton(text=f"💸 Заявки на вывод{withdrawal_badge}", callback_data="admin_withdrawals")])
     buttons.append([InlineKeyboardButton(text="📊 Установить % по умолчанию", callback_data="admin_referral_default_percent")])
+    buttons.append([InlineKeyboardButton(text="🎁 Установить % скидки", callback_data="admin_referral_discount_percent")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -520,6 +521,13 @@ def get_referral_percent_cancel_kb(user_id: int) -> InlineKeyboardMarkup:
 
 def get_referral_default_percent_cancel_kb() -> InlineKeyboardMarkup:
     """Кнопка отмены при изменении % по умолчанию"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_referrals")]
+    ])
+
+
+def get_referral_discount_cancel_kb() -> InlineKeyboardMarkup:
+    """Кнопка отмены при изменении % скидки"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_referrals")]
     ])
@@ -721,7 +729,8 @@ def get_log_add_cancel_kb() -> InlineKeyboardMarkup:
 def get_inactive_user_kb(user_id: int) -> InlineKeyboardMarkup:
     """Клавиатура для неактивного пользователя"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data=f"admin_confirm_delete_{user_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"admin_confirm_delete_{user_id}"),
+         InlineKeyboardButton(text="🚫 Удалить и заблокировать", callback_data=f"admin_delete_block_{user_id}")],
         [InlineKeyboardButton(text="👤 Подробнее", callback_data=f"admin_user_{user_id}")],
         [InlineKeyboardButton(text="❌ Закрыть", callback_data="close_message")]
     ])
@@ -746,7 +755,21 @@ def get_user_stats_kb(auto_delete: bool = False, page: int = 0, total_pages: int
     buttons.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_user_stats")])
     buttons.append([InlineKeyboardButton(text="🗑 Удалить неактивных", callback_data="admin_delete_inactive")])
     buttons.append([InlineKeyboardButton(text=auto_delete_text, callback_data="admin_toggle_auto_delete")])
+    buttons.append([InlineKeyboardButton(text="🚫 Заблокированные", callback_data="admin_blocked_users")])
     buttons.append([InlineKeyboardButton(text="📊 Мониторинг", callback_data="settings_monitoring")])
     buttons.append([InlineKeyboardButton(text="◀️ В меню", callback_data="admin_menu")])
     
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_blocked_users_kb(users: list) -> InlineKeyboardMarkup:
+    """Клавиатура списка заблокированных пользователей"""
+    buttons = []
+    for user in users:
+        name = f"@{user.username}" if user.username else f"ID: {user.telegram_id}"
+        buttons.append([InlineKeyboardButton(
+            text=f"🚫 {name}",
+            callback_data=f"admin_unblock_{user.id}"
+        )])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_user_stats")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)

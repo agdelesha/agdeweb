@@ -24,9 +24,9 @@ from services.wireguard import WireGuardService
 from services.traffic import format_bytes, get_config_traffic, get_user_total_traffic
 from services.wireguard_multi import WireGuardMultiService
 from services.ocr import OCRService
-from services.settings import is_password_required, is_channel_required, get_bot_password, is_phone_required, is_config_approval_required, get_setting, get_channel_name, get_max_configs, get_prices
+from services.settings import is_password_required, is_channel_required, get_bot_password, is_phone_required, is_config_approval_required, get_setting, get_channel_name, get_max_configs, get_prices, get_referral_discount_percent
 from keyboards.admin_kb import get_payment_review_kb, get_config_request_kb, get_check_subscription_kb
-from utils import transliterate_ru_to_en, format_datetime_moscow, format_date_moscow
+from utils import transliterate_ru_to_en, format_datetime_moscow, format_date_moscow, escape_markdown
 
 CHANNEL_USERNAME = "agdevpn"
 
@@ -939,14 +939,18 @@ async def get_vpn(callback: CallbackQuery):
     show_trial = not user.trial_used if user else True
     has_referral_discount = user and user.referrer_id and not user.first_payment_done
     prices = await get_prices()
+    discount_percent = await get_referral_discount_percent()
     
     if has_referral_discount:
+        d30 = prices['price_30'] * (100 - discount_percent) // 100
+        d90 = prices['price_90'] * (100 - discount_percent) // 100
+        d180 = prices['price_180'] * (100 - discount_percent) // 100
         tariff_text = (
             "📋 *Выбери тарифный план:*\n\n"
             f"🎁 Пробный — {prices['trial_days']} дня бесплатно (один раз)\n"
-            f"📅 30 дней — *{prices['price_30'] // 2}₽* вместо {prices['price_30']}₽ (скидка 50%)\n"
-            f"📅 90 дней — *{prices['price_90'] // 2}₽* вместо {prices['price_90']}₽ (скидка 50%)\n"
-            f"📅 180 дней — *{prices['price_180'] // 2}₽* вместо {prices['price_180']}₽ (скидка 50%)"
+            f"📅 30 дней — *{d30}₽* вместо {prices['price_30']}₽ (скидка {discount_percent}%)\n"
+            f"📅 90 дней — *{d90}₽* вместо {prices['price_90']}₽ (скидка {discount_percent}%)\n"
+            f"📅 180 дней — *{d180}₽* вместо {prices['price_180']}₽ (скидка {discount_percent}%)"
         )
     else:
         tariff_text = (
@@ -1115,10 +1119,12 @@ async def tariff_selected(callback: CallbackQuery, state: FSMContext):
             referral_balance = user.referral_balance or 0
             if user.referrer_id and not user.first_payment_done:
                 has_referral_discount = True
-                discounted_price = price // 2  # 50% скидка
+                discount_percent = await get_referral_discount_percent()
+                discounted_price = price * (100 - discount_percent) // 100
     
     # Финальная цена для оплаты
     final_price = discounted_price if has_referral_discount else price
+    discount_percent = await get_referral_discount_percent() if has_referral_discount else 0
     
     await state.update_data(
         selected_tariff=tariff_key, 
@@ -1135,7 +1141,7 @@ async def tariff_selected(callback: CallbackQuery, state: FSMContext):
     if has_referral_discount:
         text = (
             f"💳 *Оплата тарифа: {name}*\n\n"
-            f"🎁 *Скидка 50% по реферальной программе!*\n"
+            f"🎁 *Скидка {discount_percent}% по реферальной программе!*\n"
             f"💰 Сумма: *{discounted_price}₽* (вместо {price}₽)\n\n"
             f"📱 Переведите на номер:\n"
             f"`{PAYMENT_PHONE}`\n"
@@ -1228,7 +1234,8 @@ async def pay_with_referral_balance(callback: CallbackQuery, state: FSMContext, 
         
         # Проверяем скидку для реферала
         has_referral_discount = user.referrer_id and not user.first_payment_done
-        final_price = price // 2 if has_referral_discount else price
+        discount_percent = await get_referral_discount_percent() if has_referral_discount else 0
+        final_price = price * (100 - discount_percent) // 100 if has_referral_discount else price
         
         # Проверяем баланс
         if user.referral_balance < final_price:
@@ -1314,8 +1321,9 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
     else:
         original_price = tariff["price"]
     
-    # Если есть скидка 50% — ожидаем половину суммы
-    expected_amount = original_price // 2 if has_referral_discount else original_price
+    # Если есть скидка — вычисляем сумму со скидкой
+    discount_percent = await get_referral_discount_percent() if has_referral_discount else 0
+    expected_amount = original_price * (100 - discount_percent) // 100 if has_referral_discount else original_price
     photo = message.photo[-1]
     
     await message.answer("⏳ Обрабатываю чек...")
@@ -1452,7 +1460,7 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
             if paying_user and not paying_user.first_payment_done:
                 paying_user.first_payment_done = True
             
-            # Начисляем бонус рефереру
+            # Начисляем бонус рефереру (от фактической суммы оплаты)
             if referrer_id:
                 stmt_referrer = select(User).where(User.id == referrer_id)
                 result_referrer = await session.execute(stmt_referrer)
@@ -1711,7 +1719,7 @@ async def config_detail(callback: CallbackQuery):
             server_warning = "\n\n⚠️ *Этот конфиг больше не работает.*\nСервер бессрочно выбыл из работы.\nЗапроси новый конфиг."
         
         await callback.message.edit_text(
-            f"📱 *Конфиг: {config.name}*\n\n"
+            f"📱 *Конфиг: {escape_markdown(config.name)}*\n\n"
             f"Статус: {status}\n"
             f"🌍 Сервер: {server_name}\n"
             f"IP: `{config.client_ip}`\n"
@@ -1814,7 +1822,8 @@ async def qr_config(callback: CallbackQuery, bot: Bot):
                 await bot.send_photo(
                     callback.from_user.id,
                     BufferedInputFile(qr_content, filename=f"{config.name}.png"),
-                    caption=f"📷 QR-код: {config.name}"
+                    caption=f"📷 QR-код: {config.name}",
+                    parse_mode=None
                 )
                 await callback.answer("✅ QR-код отправлен")
             else:
@@ -1827,7 +1836,8 @@ async def qr_config(callback: CallbackQuery, bot: Bot):
                 await bot.send_photo(
                     callback.from_user.id,
                     FSInputFile(qr_path),
-                    caption=f"📷 QR-код: {config.name}"
+                    caption=f"📷 QR-код: {config.name}",
+                    parse_mode=None
                 )
                 await callback.answer("✅ QR-код отправлен")
             else:
@@ -1947,29 +1957,9 @@ async def my_subscription(callback: CallbackQuery):
         
         gift_text = " 🎁" if active_sub.is_gift else ""
         
-        total_received = 0
-        total_sent = 0
-        # Собираем трафик со всех серверов
-        server_traffic_cache = {}
-        for config in user.configs:
-            if not config.public_key:
-                continue
-            
-            if config.server_id:
-                if config.server_id not in server_traffic_cache:
-                    cfg_server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
-                    if cfg_server:
-                        server_traffic_cache[config.server_id] = await WireGuardMultiService.get_traffic_stats(cfg_server)
-                    else:
-                        server_traffic_cache[config.server_id] = {}
-                traffic_stats = server_traffic_cache[config.server_id]
-            else:
-                traffic_stats = await WireGuardService.get_traffic_stats()
-            
-            if config.public_key in traffic_stats:
-                stats = traffic_stats[config.public_key]
-                total_received += stats['received']
-                total_sent += stats['sent']
+        # Трафик берём из БД (кэшируется scheduler каждые 5 минут)
+        total_received = sum(c.total_received or 0 for c in user.configs)
+        total_sent = sum(c.total_sent or 0 for c in user.configs)
         
         total_traffic = format_bytes(total_received + total_sent)
         traffic_text = f"\n\n📊 *Общий трафик:* {total_traffic}" if (total_received + total_sent) > 0 else ""
@@ -2531,17 +2521,28 @@ async def referral_menu(callback: CallbackQuery, state: FSMContext):
         # Считаем статистику
         referral_count = len(user.referrals) if user.referrals else 0
         
-        # Сумма оплат рефералов (только approved)
+        # Сумма оплат рефералов (только approved) и список приглашённых
         total_referral_payments = 0
+        referrals_list = []
         for ref in (user.referrals or []):
+            ref_payments = 0
             for payment in (ref.payments or []):
                 if payment.status == "approved":
+                    ref_payments += payment.amount
                     total_referral_payments += payment.amount
+            ref_name = f"@{ref.username}" if ref.username else f"ID:{ref.telegram_id}"
+            referrals_list.append(f"  • {ref_name} — {int(ref_payments)}₽")
         
         balance = user.referral_balance
         percent = user.referral_percent
         
         has_balance = balance >= 500  # Минимум для вывода 500₽
+        
+        # Получаем % скидки для рефералов
+        discount_percent = await get_referral_discount_percent()
+        
+        # Формируем текст со списком приглашённых
+        referrals_text = "\n".join(referrals_list) if referrals_list else "  пока никого"
         
         await callback.message.edit_text(
             f"👥 *Реферальная программа*\n\n"
@@ -2550,8 +2551,9 @@ async def referral_menu(callback: CallbackQuery, state: FSMContext):
             f"├ Оплаты рефералов: {int(total_referral_payments)}₽\n"
             f"├ Твой %: {int(percent)}%\n"
             f"└ Накоплено: {int(balance)}₽\n\n"
+            f"📋 *Твои рефералы:*\n{referrals_text}\n\n"
             f"💡 Приглашай друзей и получай {int(percent)}% от их оплат!\n"
-            f"🎁 Твои рефералы получают скидку 50% на первую оплату!\n\n"
+            f"🎁 Твои рефералы получают скидку {discount_percent}% на первую оплату!\n\n"
             f"💸 Вывод средств от *500₽*\n"
             f"💳 Можно оплатить подписку бонусами!",
             parse_mode="Markdown",

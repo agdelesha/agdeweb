@@ -183,30 +183,8 @@ async def admin_user_stats(callback: CallbackQuery):
         setting = result_setting.scalar_one_or_none()
         auto_delete = setting and setting.value == "true"
         
-        # Получаем трафик со всех серверов
-        all_traffic = {}
-        try:
-            servers_stmt = select(Server).where(Server.is_active == True)
-            servers_result = await session.execute(servers_stmt)
-            servers = servers_result.scalars().all()
-            
-            for server in servers:
-                try:
-                    server_traffic = await get_server_traffic(server)
-                    if server_traffic:
-                        all_traffic.update(server_traffic)
-                except:
-                    pass
-            
-            # Также локальный сервер
-            try:
-                local_traffic = await WireGuardService.get_traffic_stats()
-                if local_traffic:
-                    all_traffic.update(local_traffic)
-            except:
-                pass
-        except:
-            pass
+        # Трафик берём из БД (кэшируется scheduler каждые 5 минут)
+        # Не делаем SSH-запросы для скорости
     
     # Формируем списки с трафиком
     user_stats = []
@@ -215,18 +193,10 @@ async def admin_user_stats(callback: CallbackQuery):
     for user in users:
         user_info = f"@{user.username}" if user.username else user.full_name[:12]
         
-        # Считаем трафик по конфигам пользователя (накопительный + текущий)
+        # Считаем трафик по конфигам пользователя из БД (кэшируется каждые 5 мин)
         user_traffic = 0
         for config in user.configs:
-            # Накопительный трафик из БД
             user_traffic += (config.total_received or 0) + (config.total_sent or 0)
-            # Плюс текущий трафик с сервера (если есть и больше накопленного)
-            if config.public_key in all_traffic:
-                stats = all_traffic[config.public_key]
-                current = stats.get('received', 0) + stats.get('sent', 0)
-                saved = (config.total_received or 0) + (config.total_sent or 0)
-                if current > saved:
-                    user_traffic = user_traffic - saved + current
         
         traffic_str = format_bytes(user_traffic) if user_traffic else "0 B"
         
@@ -1168,7 +1138,7 @@ async def admin_approve_payment(callback: CallbackQuery, bot: Bot):
         if paying_user and not paying_user.first_payment_done:
             paying_user.first_payment_done = True
         
-        # Начисляем бонус рефереру
+        # Начисляем бонус рефереру (от фактической суммы оплаты)
         if referrer_id:
             stmt_referrer = select(User).where(User.id == referrer_id)
             result_referrer = await session.execute(stmt_referrer)
@@ -1709,6 +1679,141 @@ async def admin_confirm_delete(callback: CallbackQuery):
             parse_mode="Markdown",
             reply_markup=get_users_list_kb(users)
         )
+
+
+@router.callback_query(F.data.startswith("admin_delete_block_"))
+async def admin_delete_and_block(callback: CallbackQuery):
+    """Удалить пользователя и заблокировать его telegram_id"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    user_id = int(callback.data.replace("admin_delete_block_", ""))
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.id == user_id).options(selectinload(User.configs))
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        
+        telegram_id = user.telegram_id
+        username = user.username
+        
+        # Удаляем записи из очереди конфигов
+        from database.models import ConfigQueue
+        queue_stmt = select(ConfigQueue).where(ConfigQueue.user_id == user_id)
+        queue_result = await session.execute(queue_stmt)
+        for queue_item in queue_result.scalars().all():
+            await session.delete(queue_item)
+        
+        # Удаляем конфиги с серверов
+        for config in user.configs:
+            if config.server_id:
+                server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+                if server:
+                    await WireGuardMultiService.delete_config(config.name, server, config.public_key)
+            else:
+                await WireGuardService.delete_config(config.name)
+        
+        # Удаляем пользователя
+        await session.delete(user)
+        
+        # Создаём заблокированную запись с тем же telegram_id
+        banned_user = User(
+            telegram_id=telegram_id,
+            username=username,
+            full_name="[BANNED]",
+            is_banned=True
+        )
+        session.add(banned_user)
+        await session.commit()
+        
+        await callback.answer("🚫 Пользователь удалён и заблокирован")
+        
+        try:
+            await callback.message.delete()
+        except:
+            pass
+
+
+@router.callback_query(F.data == "admin_blocked_users")
+async def admin_blocked_users(callback: CallbackQuery):
+    """Список заблокированных админом пользователей (is_banned)"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.is_banned == True).order_by(User.id.desc())
+        result = await session.execute(stmt)
+        blocked_users = result.scalars().all()
+    
+    if not blocked_users:
+        await callback.message.edit_text(
+            "✅ Нет заблокированных пользователей",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_user_stats")]
+            ])
+        )
+        return
+    
+    from keyboards.admin_kb import get_blocked_users_kb
+    await callback.message.edit_text(
+        f"🚫 *Заблокированные пользователи ({len(blocked_users)}):*\n\n"
+        f"Нажми на пользователя, чтобы разблокировать.",
+        parse_mode="Markdown",
+        reply_markup=get_blocked_users_kb(blocked_users)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_unblock_"))
+async def admin_unblock_user(callback: CallbackQuery):
+    """Разблокировать пользователя"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    user_id = int(callback.data.replace("admin_unblock_", ""))
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.id == user_id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        
+        user.is_banned = False
+        user.full_name = ""
+        await session.commit()
+        
+        name = f"@{user.username}" if user.username else f"ID: {user.telegram_id}"
+        await callback.answer(f"✅ {name} разблокирован")
+        
+        # Обновляем список
+        stmt = select(User).where(User.is_banned == True).order_by(User.id.desc())
+        result = await session.execute(stmt)
+        blocked_users = result.scalars().all()
+    
+    if not blocked_users:
+        await callback.message.edit_text(
+            "✅ Нет заблокированных пользователей",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_user_stats")]
+            ])
+        )
+        return
+    
+    from keyboards.admin_kb import get_blocked_users_kb
+    await callback.message.edit_text(
+        f"🚫 *Заблокированные пользователи ({len(blocked_users)}):*\n\n"
+        f"Нажми на пользователя, чтобы разблокировать.",
+        parse_mode="Markdown",
+        reply_markup=get_blocked_users_kb(blocked_users)
+    )
 
 
 @router.callback_query(F.data == "admin_stats")
@@ -4589,14 +4694,22 @@ async def admin_referral_detail(callback: CallbackQuery):
         
         referral_count = len(user.referrals) if user.referrals else 0
         
-        # Сумма оплат рефералов
+        # Сумма оплат рефералов и список приглашённых
         total_payments = 0
+        referrals_list = []
         for ref in (user.referrals or []):
+            ref_payments = 0
             for payment in (ref.payments or []):
                 if payment.status == "approved":
+                    ref_payments += payment.amount
                     total_payments += payment.amount
+            ref_name = f"@{ref.username}" if ref.username else f"ID:{ref.telegram_id}"
+            referrals_list.append(f"  • {ref_name} — {int(ref_payments)}₽")
         
         username = f"@{user.username}" if user.username else user.full_name
+        
+        # Формируем текст со списком приглашённых
+        referrals_text = "\n".join(referrals_list) if referrals_list else "  нет"
         
         await callback.message.edit_text(
             f"👤 *Реферал: {username}*\n\n"
@@ -4604,7 +4717,8 @@ async def admin_referral_detail(callback: CallbackQuery):
             f"👥 Приглашено: {referral_count} чел.\n"
             f"💰 Оплаты рефералов: {int(total_payments)}₽\n"
             f"📊 Процент: {int(user.referral_percent)}%\n"
-            f"💵 Накоплено: {int(user.referral_balance)}₽",
+            f"💵 Накоплено: {int(user.referral_balance)}₽\n\n"
+            f"📋 *Приглашённые:*\n{referrals_text}",
             parse_mode="Markdown",
             reply_markup=get_referral_detail_kb(user_id)
         )
@@ -4783,6 +4897,97 @@ async def process_default_referral_percent(message: Message, state: FSMContext, 
     await message.answer(
         f"✅ Процент по умолчанию установлен: {int(percent)}%\n\n"
         f"ℹ️ Новые пользователи будут получать этот % от оплат рефералов.",
+        reply_markup=get_admin_menu_kb()
+    )
+
+
+# ===== % СКИДКИ ДЛЯ РЕФЕРАЛОВ =====
+
+@router.callback_query(F.data == "admin_referral_discount_percent")
+async def admin_referral_discount_percent(callback: CallbackQuery, state: FSMContext):
+    """Установка % скидки на первую оплату для рефералов"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    await callback.answer()
+    
+    # Получаем текущий % скидки
+    async with async_session() as session:
+        stmt = select(BotSettings).where(BotSettings.key == "referral_discount_percent")
+        result = await session.execute(stmt)
+        setting = result.scalar_one_or_none()
+        current_percent = int(float(setting.value)) if setting else 50
+    
+    await state.set_state(AdminStates.waiting_for_referral_discount_percent)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
+    
+    from keyboards.admin_kb import get_referral_discount_cancel_kb
+    
+    await callback.message.edit_text(
+        f"🎁 *Скидка на первую оплату реферала*\n\n"
+        f"Текущая скидка: {current_percent}%\n\n"
+        f"ℹ️ _Эта скидка применяется к первой оплате_\n"
+        f"_пользователя, пришедшего по реферальной ссылке._\n\n"
+        f"Введи новый процент скидки (от 0 до 100):",
+        parse_mode="Markdown",
+        reply_markup=get_referral_discount_cancel_kb()
+    )
+
+
+@router.message(AdminStates.waiting_for_referral_discount_percent)
+async def process_referral_discount_percent(message: Message, state: FSMContext, bot: Bot):
+    """Обработка ввода % скидки"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    
+    try:
+        percent = int(message.text.strip())
+        if percent < 0 or percent > 100:
+            raise ValueError()
+    except ValueError:
+        from keyboards.admin_kb import get_referral_discount_cancel_kb
+        await message.answer(
+            "❌ Введи целое число от 0 до 100",
+            reply_markup=get_referral_discount_cancel_kb()
+        )
+        return
+    
+    # Удаляем сообщение с кнопкой "отмена"
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(message.chat.id, prompt_msg_id)
+        except:
+            pass
+    
+    # Сохраняем в BotSettings
+    async with async_session() as session:
+        stmt = select(BotSettings).where(BotSettings.key == "referral_discount_percent")
+        result = await session.execute(stmt)
+        setting = result.scalar_one_or_none()
+        
+        if setting:
+            setting.value = str(percent)
+        else:
+            setting = BotSettings(key="referral_discount_percent", value=str(percent))
+            session.add(setting)
+        
+        await session.commit()
+    
+    await state.clear()
+    
+    # Удаляем сообщение пользователя
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    await message.answer(
+        f"✅ Скидка установлена: {percent}%\n\n"
+        f"ℹ️ Теперь рефералы получат {percent}% скидку на первую оплату.",
         reply_markup=get_admin_menu_kb()
     )
 

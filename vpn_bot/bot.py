@@ -168,6 +168,69 @@ async def main():
     
     dp = Dispatcher()
     
+    # Middleware для проверки блокировки пользователей
+    from aiogram import BaseMiddleware
+    from aiogram.types import Update, Message, CallbackQuery
+    from typing import Callable, Dict, Any, Awaitable
+    
+    class BlockedUserMiddleware(BaseMiddleware):
+        async def __call__(
+            self,
+            handler: Callable[[Update, Dict[str, Any]], Awaitable[Any]],
+            event: Update,
+            data: Dict[str, Any]
+        ) -> Any:
+            # Получаем telegram_id пользователя
+            user_id = None
+            if isinstance(event, Message) and event.from_user:
+                user_id = event.from_user.id
+            elif isinstance(event, CallbackQuery) and event.from_user:
+                user_id = event.from_user.id
+            
+            if user_id:
+                # Проверяем блокировку админом (is_banned)
+                async with async_session() as session:
+                    from database import User
+                    stmt = select(User).where(User.telegram_id == user_id, User.is_banned == True)
+                    result = await session.execute(stmt)
+                    banned_user = result.scalar_one_or_none()
+                    
+                    if banned_user:
+                        # Пользователь заблокирован админом
+                        if isinstance(event, Message):
+                            await event.answer("а всё")
+                        elif isinstance(event, CallbackQuery):
+                            await event.answer("а всё", show_alert=True)
+                        return  # Не передаём дальше
+            
+            return await handler(event, data)
+    
+    # Регистрируем middleware
+    dp.message.middleware(BlockedUserMiddleware())
+    dp.callback_query.middleware(BlockedUserMiddleware())
+    
+    # Глобальный обработчик ошибок
+    @dp.error()
+    async def error_handler(event, exception):
+        """Обработчик типичных ошибок Telegram"""
+        if isinstance(exception, TelegramBadRequest):
+            msg = str(exception)
+            # Игнорируем "message is not modified" — это не ошибка
+            if "message is not modified" in msg:
+                logger.debug(f"Игнорируем: {msg}")
+                return True
+            # Игнорируем "query is too old" — пользователь нажал кнопку слишком поздно
+            if "query is too old" in msg:
+                logger.debug(f"Игнорируем: {msg}")
+                return True
+        if isinstance(exception, (TelegramForbiddenError, TelegramNotFound)):
+            # Пользователь заблокировал бота или чат не найден
+            logger.debug(f"Чат недоступен: {exception}")
+            return True
+        # Остальные ошибки логируем
+        logger.error(f"Необработанная ошибка: {exception}", exc_info=True)
+        return True
+    
     # admin_router первый — чтобы FSM-состояния админки обрабатывались раньше AI-ассистента
     dp.include_router(admin_router)
     dp.include_router(user_router)

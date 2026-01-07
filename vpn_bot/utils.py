@@ -81,6 +81,17 @@ def format_bytes(size: int) -> str:
     return f"{size:.2f} TiB"
 
 
+def escape_markdown(text: str) -> str:
+    """Экранирует специальные символы Markdown"""
+    if not text:
+        return text
+    # Экранируем символы: _ * [ ] ( ) ~ ` > # + - = | { } . !
+    escape_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in escape_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
+
 def transliterate_ru_to_en(text: str) -> str:
     """Транслитерация русских букв в английские"""
     translit_map = {

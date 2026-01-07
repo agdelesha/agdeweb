@@ -1,0 +1,28 @@
+# Full list of routes from your data
+# WARNING: This is a HUGE list (1300+ routes) and may overload your router
+# It's better to use aggregated CIDR blocks instead
+
+# Format for Keenetic CLI:
+# ip route <network/mask> <interface>
+
+# Example of how to apply these routes:
+# 1. Connect via SSH: ssh admin@router_ip
+# 2. Enter configuration mode: configure
+# 3. Add routes one by one: ip route 1.9.57.0/24 Wireguard0
+# 4. Save: system configuration save
+# 5. Exit: exit
+
+# RECOMMENDATION: Instead of adding 1300+ individual /24 routes,
+# use the aggregated script (apply-routes.sh) which uses larger CIDR blocks
+# This will be much more efficient and won't overload the router
+
+# Your original routes (converted to correct syntax):
+ip route 1.9.57.0/24 Wireguard0
+ip route 1.9.91.0/24 Wireguard0
+ip route 1.37.40.0/24 Wireguard0
+ip route 1.37.41.0/24 Wireguard0
+ip route 1.37.42.0/24 Wireguard0
+# ... (and 1300+ more routes)
+
+# NOTE: This file is for reference only
+# Use apply-routes.sh for actual deployment

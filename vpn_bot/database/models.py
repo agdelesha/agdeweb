@@ -51,6 +51,7 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     trial_used: Mapped[bool] = mapped_column(Boolean, default=False)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_banned: Mapped[bool] = mapped_column(Boolean, default=False)  # заблокирован админом вручную
     how_to_seen: Mapped[bool] = mapped_column(Boolean, default=False)
     max_configs: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # индивидуальный лимит конфигов (None = глобальный)
     registration_complete: Mapped[bool] = mapped_column(Boolean, default=False)  # прошёл ли все этапы регистрации

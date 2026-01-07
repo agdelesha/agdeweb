@@ -67,7 +67,7 @@ class SchedulerService:
         
         self.scheduler.add_job(
             self.update_traffic_stats,
-            IntervalTrigger(minutes=30),
+            IntervalTrigger(minutes=5),
             id="update_traffic",
             replace_existing=True
         )
@@ -133,9 +133,11 @@ class SchedulerService:
                     
                 except (TelegramBadRequest, TelegramForbiddenError) as e:
                     error_msg = str(e)
-                    logger.error(f"Ошибка отправки уведомления user_id={user.telegram_id} (@{user.username}): {error_msg}")
                     if "chat not found" in error_msg.lower() or "bot was blocked" in error_msg.lower() or "user is deactivated" in error_msg.lower():
+                        logger.warning(f"Пользователь недоступен user_id={user.telegram_id} (@{user.username}): {error_msg}")
                         await self._handle_inactive_user(user)
+                    else:
+                        logger.error(f"Ошибка отправки уведомления user_id={user.telegram_id} (@{user.username}): {error_msg}")
                 except Exception as e:
                     logger.error(f"Ошибка отправки уведомления user_id={user.telegram_id}: {e}")
     
@@ -263,9 +265,11 @@ class SchedulerService:
                     )
                 except (TelegramBadRequest, TelegramForbiddenError) as e:
                     error_msg = str(e)
-                    logger.error(f"Ошибка отправки уведомления об истечении user_id={user.telegram_id} (@{user.username}): {error_msg}")
                     if "chat not found" in error_msg.lower() or "bot was blocked" in error_msg.lower() or "user is deactivated" in error_msg.lower():
+                        logger.warning(f"Пользователь недоступен user_id={user.telegram_id} (@{user.username}): {error_msg}")
                         await self._handle_inactive_user(user)
+                    else:
+                        logger.error(f"Ошибка отправки уведомления об истечении user_id={user.telegram_id} (@{user.username}): {error_msg}")
                 except Exception as e:
                     logger.error(f"Ошибка отправки уведомления об истечении user_id={user.telegram_id}: {e}")
     
