@@ -1630,15 +1630,21 @@ async def admin_delete_user_confirm(callback: CallbackQuery):
     
     username = f"@{user.username}" if user.username else user.full_name
     
+    trial_status = "✅ использован" if user.trial_used else "❌ не использован"
+    
     await callback.message.edit_text(
-        f"⚠️ Подтвердите удаление\n\n"
+        f"⚠️ Подтвердите деактивацию\n\n"
         f"Пользователь: {username}\n"
-        f"ID: {user.telegram_id}\n\n"
+        f"ID: {user.telegram_id}\n"
+        f"Пробный период: {trial_status}\n\n"
         f"Будут удалены:\n"
-        f"• Все конфиги\n"
-        f"• Все подписки\n"
-        f"• История платежей\n\n"
-        f"Это действие нельзя отменить!",
+        f"• Все конфиги (с серверов)\n"
+        f"• Все подписки\n\n"
+        f"Сохранится:\n"
+        f"• Профиль пользователя\n"
+        f"• История платежей\n"
+        f"• Статус пробного периода\n\n"
+        f"При возврате пользователь НЕ получит новый пробный период.",
         parse_mode=None,
         reply_markup=get_confirm_delete_kb(user.id)
     )
