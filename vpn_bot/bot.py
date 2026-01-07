@@ -210,9 +210,12 @@ async def main():
     dp.callback_query.middleware(BlockedUserMiddleware())
     
     # Глобальный обработчик ошибок
+    from aiogram.types import ErrorEvent
+    
     @dp.error()
-    async def error_handler(event, exception):
+    async def error_handler(event: ErrorEvent):
         """Обработчик типичных ошибок Telegram"""
+        exception = event.exception
         if isinstance(exception, TelegramBadRequest):
             msg = str(exception)
             # Игнорируем "message is not modified" — это не ошибка
