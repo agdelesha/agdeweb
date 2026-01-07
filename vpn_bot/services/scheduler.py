@@ -159,9 +159,8 @@ class SchedulerService:
                 auto_delete = await get_setting("auto_delete_inactive", "false")
                 
                 if auto_delete == "true":
-                    # Автоудаление включено
-                    await self._delete_user(db_user.id)
-                    logger.info(f"Пользователь {user_info} (ID: {db_user.telegram_id}) автоматически удалён (неактивен)")
+                    # Автодеактивация включена
+                    await self._deactivate_user(db_user.id)
                 else:
                     # Уведомляем админа
                     try:
@@ -179,8 +178,8 @@ class SchedulerService:
                     except Exception as e:
                         logger.error(f"Ошибка уведомления админа о неактивном пользователе: {e}")
     
-    async def _delete_user(self, user_id: int):
-        """Удаление пользователя и его конфигов"""
+    async def _deactivate_user(self, user_id: int):
+        """Деактивация пользователя (soft-delete): удаляем конфиги, помечаем is_blocked=True"""
         async with async_session() as session:
             stmt = select(User).where(User.id == user_id).options(selectinload(User.configs))
             result = await session.execute(stmt)
@@ -188,17 +187,36 @@ class SchedulerService:
             if not user:
                 return
             
-            # Удаляем конфиги с серверов
-            for config in user.configs:
-                if config.server_id:
-                    server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
-                    if server:
-                        await WireGuardMultiService.delete_config(config.name, server, config.public_key)
-                else:
-                    await WireGuardService.delete_config(config.name)
+            user_info = f"@{user.username}" if user.username else user.full_name
             
-            await session.delete(user)
+            # Удаляем конфиги с серверов (освобождаем ресурсы)
+            for config in user.configs:
+                try:
+                    if config.server_id:
+                        server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+                        if server:
+                            await WireGuardMultiService.delete_config(config.name, server, config.public_key)
+                    else:
+                        await WireGuardService.delete_config(config.name)
+                except Exception as e:
+                    logger.error(f"Ошибка удаления конфига {config.name}: {e}")
+            
+            # Удаляем конфиги из БД
+            for config in user.configs:
+                await session.delete(config)
+            
+            # Удаляем подписки
+            from database.models import Subscription
+            sub_stmt = select(Subscription).where(Subscription.user_id == user.id)
+            sub_result = await session.execute(sub_stmt)
+            for sub in sub_result.scalars().all():
+                await session.delete(sub)
+            
+            # Помечаем пользователя как неактивного (soft-delete)
+            user.is_blocked = True
             await session.commit()
+            
+            logger.info(f"Пользователь {user_info} (ID: {user.telegram_id}) деактивирован (is_blocked=True)")
     
     async def disable_expired_configs(self):
         logger.info("Проверка истекших подписок...")

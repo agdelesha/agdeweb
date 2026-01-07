@@ -55,7 +55,11 @@ async def save_bot_message(state: FSMContext, message_id: int):
 
 
 async def get_or_create_user(telegram_id: int, username: str, full_name: str, referrer_telegram_id: int = None) -> tuple:
-    """Returns (user, is_new_user)"""
+    """Returns (user, is_new_user)
+    
+    Если пользователь был деактивирован (is_blocked=True), восстанавливаем его.
+    При этом trial_used сохраняется — пробный период повторно не даётся.
+    """
     async with async_session() as session:
         stmt = select(User).where(User.telegram_id == telegram_id)
         result = await session.execute(stmt)
@@ -81,6 +85,18 @@ async def get_or_create_user(telegram_id: int, username: str, full_name: str, re
             await session.commit()
             await session.refresh(user)
             return user, True
+        
+        # Пользователь существует — проверяем, был ли он деактивирован
+        if user.is_blocked:
+            # Восстанавливаем пользователя (но trial_used остаётся!)
+            user.is_blocked = False
+            user.failed_notifications = 0
+            user.username = username  # Обновляем username на случай изменения
+            user.full_name = full_name
+            await session.commit()
+            await session.refresh(user)
+            # Возвращаем is_new=False, т.к. это возвращающийся пользователь
+            return user, False
         
         return user, False
 

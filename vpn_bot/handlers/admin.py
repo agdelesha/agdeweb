@@ -168,8 +168,11 @@ async def admin_user_stats(callback: CallbackQuery):
     per_page = 15
     
     async with async_session() as session:
-        # Получаем всех пользователей с подписками и платежами
-        stmt = select(User).options(
+        # Получаем только активных пользователей (исключаем is_blocked и is_banned)
+        stmt = select(User).where(
+            User.is_blocked == False,
+            User.is_banned == False
+        ).options(
             selectinload(User.subscriptions),
             selectinload(User.payments),
             selectinload(User.configs)
@@ -438,7 +441,11 @@ async def admin_users(callback: CallbackQuery):
     
     await callback.answer()
     async with async_session() as session:
-        stmt = select(User).order_by(User.created_at.desc())
+        # Исключаем неактивных (is_blocked) и заблокированных (is_banned)
+        stmt = select(User).where(
+            User.is_blocked == False,
+            User.is_banned == False
+        ).order_by(User.created_at.desc())
         result = await session.execute(stmt)
         users = result.scalars().all()
     
@@ -465,7 +472,11 @@ async def admin_users_page(callback: CallbackQuery):
     page = int(callback.data.replace("admin_users_page_", ""))
     
     async with async_session() as session:
-        stmt = select(User).order_by(User.created_at.desc())
+        # Исключаем неактивных (is_blocked) и заблокированных (is_banned)
+        stmt = select(User).where(
+            User.is_blocked == False,
+            User.is_banned == False
+        ).order_by(User.created_at.desc())
         result = await session.execute(stmt)
         users = result.scalars().all()
     
@@ -1635,6 +1646,7 @@ async def admin_delete_user_confirm(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin_confirm_delete_"))
 async def admin_confirm_delete(callback: CallbackQuery):
+    """Деактивация пользователя (soft-delete): удаляем конфиги, помечаем is_blocked=True"""
     if not is_admin(callback.from_user.id):
         return
     
@@ -1650,7 +1662,7 @@ async def admin_confirm_delete(callback: CallbackQuery):
             return
         
         # Удаляем записи из очереди конфигов
-        from database.models import ConfigQueue
+        from database.models import ConfigQueue, Subscription
         queue_stmt = select(ConfigQueue).where(ConfigQueue.user_id == user_id)
         queue_result = await session.execute(queue_stmt)
         for queue_item in queue_result.scalars().all():
@@ -1658,19 +1670,35 @@ async def admin_confirm_delete(callback: CallbackQuery):
         
         # Удаляем конфиги с серверов
         for config in user.configs:
-            if config.server_id:
-                server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
-                if server:
-                    await WireGuardMultiService.delete_config(config.name, server, config.public_key)
-            else:
-                await WireGuardService.delete_config(config.name)
+            try:
+                if config.server_id:
+                    server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+                    if server:
+                        await WireGuardMultiService.delete_config(config.name, server, config.public_key)
+                else:
+                    await WireGuardService.delete_config(config.name)
+            except Exception as e:
+                logger.error(f"Ошибка удаления конфига {config.name}: {e}")
         
-        await session.delete(user)
+        # Удаляем конфиги из БД
+        for config in user.configs:
+            await session.delete(config)
+        
+        # Удаляем подписки
+        sub_stmt = select(Subscription).where(Subscription.user_id == user.id)
+        sub_result = await session.execute(sub_stmt)
+        for sub in sub_result.scalars().all():
+            await session.delete(sub)
+        
+        # Помечаем пользователя как неактивного (soft-delete)
+        user.is_blocked = True
+        user.failed_notifications = 0
         await session.commit()
         
-        await callback.answer("🗑 Пользователь удалён")
+        await callback.answer("🗑 Пользователь деактивирован")
         
-        stmt = select(User).order_by(User.created_at.desc())
+        # Показываем только активных пользователей
+        stmt = select(User).where(User.is_blocked == False, User.is_banned == False).order_by(User.created_at.desc())
         result = await session.execute(stmt)
         users = result.scalars().all()
         
@@ -1683,7 +1711,7 @@ async def admin_confirm_delete(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin_delete_block_"))
 async def admin_delete_and_block(callback: CallbackQuery):
-    """Удалить пользователя и заблокировать его telegram_id"""
+    """Деактивировать пользователя и заблокировать (is_banned=True) — не сможет вернуться"""
     if not is_admin(callback.from_user.id):
         return
     
@@ -1698,11 +1726,8 @@ async def admin_delete_and_block(callback: CallbackQuery):
             await callback.answer("Пользователь не найден", show_alert=True)
             return
         
-        telegram_id = user.telegram_id
-        username = user.username
-        
         # Удаляем записи из очереди конфигов
-        from database.models import ConfigQueue
+        from database.models import ConfigQueue, Subscription
         queue_stmt = select(ConfigQueue).where(ConfigQueue.user_id == user_id)
         queue_result = await session.execute(queue_stmt)
         for queue_item in queue_result.scalars().all():
@@ -1710,27 +1735,33 @@ async def admin_delete_and_block(callback: CallbackQuery):
         
         # Удаляем конфиги с серверов
         for config in user.configs:
-            if config.server_id:
-                server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
-                if server:
-                    await WireGuardMultiService.delete_config(config.name, server, config.public_key)
-            else:
-                await WireGuardService.delete_config(config.name)
+            try:
+                if config.server_id:
+                    server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+                    if server:
+                        await WireGuardMultiService.delete_config(config.name, server, config.public_key)
+                else:
+                    await WireGuardService.delete_config(config.name)
+            except Exception as e:
+                logger.error(f"Ошибка удаления конфига {config.name}: {e}")
         
-        # Удаляем пользователя
-        await session.delete(user)
+        # Удаляем конфиги из БД
+        for config in user.configs:
+            await session.delete(config)
         
-        # Создаём заблокированную запись с тем же telegram_id
-        banned_user = User(
-            telegram_id=telegram_id,
-            username=username,
-            full_name="[BANNED]",
-            is_banned=True
-        )
-        session.add(banned_user)
+        # Удаляем подписки
+        sub_stmt = select(Subscription).where(Subscription.user_id == user.id)
+        sub_result = await session.execute(sub_stmt)
+        for sub in sub_result.scalars().all():
+            await session.delete(sub)
+        
+        # Помечаем как заблокированного админом (is_banned) и неактивного (is_blocked)
+        user.is_banned = True
+        user.is_blocked = True
+        user.failed_notifications = 0
         await session.commit()
         
-        await callback.answer("🚫 Пользователь удалён и заблокирован")
+        await callback.answer("🚫 Пользователь деактивирован и заблокирован")
         
         try:
             await callback.message.delete()
@@ -1769,13 +1800,13 @@ async def admin_blocked_users(callback: CallbackQuery):
     )
 
 
-@router.callback_query(F.data.startswith("admin_unblock_"))
-async def admin_unblock_user(callback: CallbackQuery):
-    """Разблокировать пользователя"""
+@router.callback_query(F.data.startswith("admin_unban_"))
+async def admin_unban_user(callback: CallbackQuery):
+    """Разбанить пользователя (снять is_banned)"""
     if not is_admin(callback.from_user.id):
         return
     
-    user_id = int(callback.data.replace("admin_unblock_", ""))
+    user_id = int(callback.data.replace("admin_unban_", ""))
     
     async with async_session() as session:
         stmt = select(User).where(User.id == user_id)
@@ -1787,11 +1818,11 @@ async def admin_unblock_user(callback: CallbackQuery):
             return
         
         user.is_banned = False
-        user.full_name = ""
+        user.is_blocked = False  # Также снимаем is_blocked
         await session.commit()
         
         name = f"@{user.username}" if user.username else f"ID: {user.telegram_id}"
-        await callback.answer(f"✅ {name} разблокирован")
+        await callback.answer(f"✅ {name} разбанен")
         
         # Обновляем список
         stmt = select(User).where(User.is_banned == True).order_by(User.id.desc())
@@ -1813,6 +1844,97 @@ async def admin_unblock_user(callback: CallbackQuery):
         f"Нажми на пользователя, чтобы разблокировать.",
         parse_mode="Markdown",
         reply_markup=get_blocked_users_kb(blocked_users)
+    )
+
+
+@router.callback_query(F.data == "admin_inactive_users")
+async def admin_inactive_users(callback: CallbackQuery):
+    """Список неактивных пользователей (is_blocked=True, удалили бота)"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    
+    async with async_session() as session:
+        # Неактивные = is_blocked=True, но НЕ is_banned (те кто удалил бота, а не забанены)
+        stmt = select(User).where(
+            User.is_blocked == True,
+            User.is_banned == False
+        ).order_by(User.id.desc())
+        result = await session.execute(stmt)
+        inactive_users = result.scalars().all()
+    
+    if not inactive_users:
+        await callback.message.edit_text(
+            "✅ Нет неактивных пользователей",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_user_stats")]
+            ])
+        )
+        return
+    
+    from keyboards.admin_kb import get_inactive_users_kb
+    await callback.message.edit_text(
+        f"😴 *Неактивные пользователи ({len(inactive_users)}):*\n\n"
+        f"Это пользователи, которые удалили бота.\n"
+        f"[✓] = использовал пробный период\n"
+        f"[○] = не использовал пробный период\n\n"
+        f"Нажми, чтобы реактивировать (вернуть в активные).",
+        parse_mode="Markdown",
+        reply_markup=get_inactive_users_kb(inactive_users)
+    )
+
+
+@router.callback_query(F.data.startswith("admin_reactivate_"))
+async def admin_reactivate_user(callback: CallbackQuery):
+    """Реактивировать неактивного пользователя (снять is_blocked)"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    user_id = int(callback.data.replace("admin_reactivate_", ""))
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.id == user_id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        
+        user.is_blocked = False
+        user.failed_notifications = 0
+        await session.commit()
+        
+        name = f"@{user.username}" if user.username else f"ID: {user.telegram_id}"
+        await callback.answer(f"✅ {name} реактивирован")
+        
+        # Обновляем список
+        stmt = select(User).where(
+            User.is_blocked == True,
+            User.is_banned == False
+        ).order_by(User.id.desc())
+        result = await session.execute(stmt)
+        inactive_users = result.scalars().all()
+    
+    if not inactive_users:
+        await callback.message.edit_text(
+            "✅ Нет неактивных пользователей",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_user_stats")]
+            ])
+        )
+        return
+    
+    from keyboards.admin_kb import get_inactive_users_kb
+    await callback.message.edit_text(
+        f"😴 *Неактивные пользователи ({len(inactive_users)}):*\n\n"
+        f"Это пользователи, которые удалили бота.\n"
+        f"[✓] = использовал пробный период\n"
+        f"[○] = не использовал пробный период\n\n"
+        f"Нажми, чтобы реактивировать (вернуть в активные).",
+        parse_mode="Markdown",
+        reply_markup=get_inactive_users_kb(inactive_users)
     )
 
 

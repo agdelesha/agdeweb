@@ -755,7 +755,10 @@ def get_user_stats_kb(auto_delete: bool = False, page: int = 0, total_pages: int
     buttons.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_user_stats")])
     buttons.append([InlineKeyboardButton(text="🗑 Удалить неактивных", callback_data="admin_delete_inactive")])
     buttons.append([InlineKeyboardButton(text=auto_delete_text, callback_data="admin_toggle_auto_delete")])
-    buttons.append([InlineKeyboardButton(text="🚫 Заблокированные", callback_data="admin_blocked_users")])
+    buttons.append([
+        InlineKeyboardButton(text="😴 Неактивные", callback_data="admin_inactive_users"),
+        InlineKeyboardButton(text="🚫 Забаненные", callback_data="admin_blocked_users")
+    ])
     buttons.append([InlineKeyboardButton(text="📊 Мониторинг", callback_data="settings_monitoring")])
     buttons.append([InlineKeyboardButton(text="◀️ В меню", callback_data="admin_menu")])
     
@@ -763,13 +766,28 @@ def get_user_stats_kb(auto_delete: bool = False, page: int = 0, total_pages: int
 
 
 def get_blocked_users_kb(users: list) -> InlineKeyboardMarkup:
-    """Клавиатура списка заблокированных пользователей"""
+    """Клавиатура списка заблокированных админом пользователей (is_banned)"""
     buttons = []
     for user in users:
         name = f"@{user.username}" if user.username else f"ID: {user.telegram_id}"
         buttons.append([InlineKeyboardButton(
             text=f"🚫 {name}",
-            callback_data=f"admin_unblock_{user.id}"
+            callback_data=f"admin_unban_{user.id}"
+        )])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_user_stats")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_inactive_users_kb(users: list) -> InlineKeyboardMarkup:
+    """Клавиатура списка неактивных пользователей (is_blocked, удалили бота)"""
+    buttons = []
+    for user in users:
+        name = f"@{user.username}" if user.username else f"ID: {user.telegram_id}"
+        # Показываем trial_used чтобы админ видел, использовал ли пробный период
+        trial_mark = "✓" if user.trial_used else "○"
+        buttons.append([InlineKeyboardButton(
+            text=f"😴 {name} [{trial_mark}]",
+            callback_data=f"admin_reactivate_{user.id}"
         )])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_user_stats")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
