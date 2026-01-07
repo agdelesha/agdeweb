@@ -12,6 +12,7 @@ def get_admin_menu_kb(pending_count: int = 0, pending_withdrawals: int = 0, queu
         [InlineKeyboardButton(text=f"📊 Статистика пользователей{inactive_badge}", callback_data="admin_user_stats")],
         [InlineKeyboardButton(text=f"👥 Рефералы{withdrawal_badge}", callback_data="admin_referrals")],
         [InlineKeyboardButton(text=f"🖥 Серверы{queue_badge}", callback_data="admin_servers")],
+        [InlineKeyboardButton(text="📡 Мониторинг конфигов", callback_data="admin_configs_monitor")],
         [InlineKeyboardButton(text="🤖 Боты", callback_data="settings_bots")],
         [InlineKeyboardButton(text="💵 Цены", callback_data="admin_prices")],
         [InlineKeyboardButton(text="✉️ Сообщение", callback_data="admin_broadcast")],
@@ -790,4 +791,60 @@ def get_inactive_users_kb(users: list) -> InlineKeyboardMarkup:
             callback_data=f"admin_reactivate_{user.id}"
         )])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="admin_user_stats")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_configs_monitor_kb(servers: list, selected_server_id: int = None, filter_status: str = "all") -> InlineKeyboardMarkup:
+    """Клавиатура мониторинга конфигов"""
+    buttons = []
+    
+    # Фильтр по серверу
+    server_buttons = []
+    for server in servers:
+        is_selected = server.id == selected_server_id
+        text = f"{'✅ ' if is_selected else ''}{server.name}"
+        server_buttons.append(InlineKeyboardButton(
+            text=text,
+            callback_data=f"monitor_server_{server.id}"
+        ))
+    
+    # Разбиваем на ряды по 2 кнопки
+    for i in range(0, len(server_buttons), 2):
+        buttons.append(server_buttons[i:i+2])
+    
+    # Фильтр по статусу
+    status_filters = [
+        ("🟢 Онлайн", "online"),
+        ("🟡 Недавно", "recent"),
+        ("🔴 Оффлайн", "offline"),
+        ("⚫ Неактивные", "inactive"),
+        ("📋 Все", "all"),
+    ]
+    
+    filter_buttons = []
+    for text, status in status_filters:
+        is_selected = filter_status == status
+        btn_text = f"{'✅ ' if is_selected else ''}{text}"
+        filter_buttons.append(InlineKeyboardButton(
+            text=btn_text,
+            callback_data=f"monitor_filter_{status}"
+        ))
+    
+    # Разбиваем фильтры на ряды по 3
+    for i in range(0, len(filter_buttons), 3):
+        buttons.append(filter_buttons[i:i+3])
+    
+    buttons.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_configs_monitor")])
+    buttons.append([InlineKeyboardButton(text="◀️ В меню", callback_data="admin_menu")])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_config_detail_kb(config_id: int, server_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура детальной информации о конфиге"""
+    buttons = [
+        [InlineKeyboardButton(text="🔄 Обновить статус", callback_data=f"monitor_refresh_{config_id}")],
+        [InlineKeyboardButton(text="👤 Профиль пользователя", callback_data=f"monitor_user_{config_id}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"monitor_server_{server_id}")]
+    ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)

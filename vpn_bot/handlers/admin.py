@@ -1938,6 +1938,137 @@ async def admin_reactivate_user(callback: CallbackQuery):
     )
 
 
+@router.callback_query(F.data == "admin_configs_monitor")
+async def admin_configs_monitor(callback: CallbackQuery, state: FSMContext):
+    """Мониторинг конфигов WireGuard — статус, handshake, endpoint"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    
+    # Получаем сохранённые фильтры
+    data = await state.get_data()
+    selected_server_id = data.get("monitor_server_id")
+    filter_status = data.get("monitor_filter", "all")
+    
+    async with async_session() as session:
+        # Получаем все серверы
+        stmt = select(Server).where(Server.is_active == True).order_by(Server.priority.desc())
+        result = await session.execute(stmt)
+        servers = result.scalars().all()
+        
+        if not servers:
+            await callback.message.edit_text(
+                "❌ Нет активных серверов",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ В меню", callback_data="admin_menu")]
+                ])
+            )
+            return
+        
+        # Если сервер не выбран, берём первый
+        if selected_server_id is None:
+            selected_server_id = servers[0].id
+            await state.update_data(monitor_server_id=selected_server_id)
+        
+        # Находим выбранный сервер
+        selected_server = next((s for s in servers if s.id == selected_server_id), servers[0])
+        
+        # Получаем конфиги этого сервера
+        config_stmt = select(Config).where(Config.server_id == selected_server_id).options(
+            selectinload(Config.user)
+        )
+        config_result = await session.execute(config_stmt)
+        configs = config_result.scalars().all()
+    
+    # Получаем статус пиров с сервера
+    from services.wireguard_multi import WireGuardMultiService
+    peers_status = await WireGuardMultiService.get_peers_status(selected_server)
+    
+    # Формируем список конфигов со статусами
+    config_lines = []
+    stats = {"online": 0, "recent": 0, "offline": 0, "inactive": 0, "never": 0}
+    
+    for config in configs:
+        peer_data = peers_status.get(config.public_key, {})
+        handshake = peer_data.get('latest_handshake')
+        endpoint = peer_data.get('endpoint')
+        
+        status = WireGuardMultiService.get_peer_status(handshake)
+        stats[status] = stats.get(status, 0) + 1
+        
+        # Фильтруем по статусу
+        if filter_status != "all" and status != filter_status:
+            continue
+        
+        # Иконка статуса
+        status_icons = {
+            "online": "🟢",
+            "recent": "🟡", 
+            "offline": "🔴",
+            "inactive": "⚫",
+            "never": "⚪"
+        }
+        icon = status_icons.get(status, "❓")
+        
+        # Имя пользователя
+        user_name = f"@{config.user.username}" if config.user and config.user.username else config.name
+        
+        # Время handshake
+        handshake_str = WireGuardMultiService.format_handshake_time(handshake)
+        
+        # Endpoint (IP клиента)
+        endpoint_str = ""
+        if endpoint:
+            ip = endpoint.split(":")[0] if ":" in endpoint else endpoint
+            endpoint_str = f" [{ip}]"
+        
+        config_lines.append(f"{icon} {user_name}: {handshake_str}{endpoint_str}")
+    
+    # Ограничиваем вывод
+    if len(config_lines) > 20:
+        config_lines = config_lines[:20]
+        config_lines.append(f"... и ещё {len(configs) - 20}")
+    
+    config_text = "\n".join(config_lines) if config_lines else "Нет конфигов с выбранным статусом"
+    
+    from keyboards.admin_kb import get_configs_monitor_kb
+    await callback.message.edit_text(
+        f"📡 *Мониторинг конфигов*\n\n"
+        f"🖥 Сервер: *{selected_server.name}*\n"
+        f"📊 Всего: {len(configs)} | 🟢 {stats['online']} | 🟡 {stats['recent']} | 🔴 {stats['offline']} | ⚫ {stats['inactive']}\n\n"
+        f"{config_text}",
+        parse_mode="Markdown",
+        reply_markup=get_configs_monitor_kb(servers, selected_server_id, filter_status)
+    )
+
+
+@router.callback_query(F.data.startswith("monitor_server_"))
+async def monitor_select_server(callback: CallbackQuery, state: FSMContext):
+    """Выбор сервера для мониторинга"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    server_id = int(callback.data.replace("monitor_server_", ""))
+    await state.update_data(monitor_server_id=server_id)
+    
+    # Перезагружаем страницу мониторинга
+    await admin_configs_monitor(callback, state)
+
+
+@router.callback_query(F.data.startswith("monitor_filter_"))
+async def monitor_select_filter(callback: CallbackQuery, state: FSMContext):
+    """Выбор фильтра статуса для мониторинга"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    filter_status = callback.data.replace("monitor_filter_", "")
+    await state.update_data(monitor_filter=filter_status)
+    
+    # Перезагружаем страницу мониторинга
+    await admin_configs_monitor(callback, state)
+
+
 @router.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):

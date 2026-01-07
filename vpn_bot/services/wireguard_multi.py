@@ -414,6 +414,113 @@ rm /tmp/psk_{public_key[:8]}.key
         
         return peers
     
+    @classmethod
+    async def get_peers_status(cls, server: Server) -> Dict[str, Dict]:
+        """Получить полную информацию о пирах: handshake, endpoint, трафик, статус"""
+        
+        if LOCAL_MODE:
+            return {}
+        
+        success, stdout, stderr = await cls._ssh_execute(
+            server,
+            f"wg show {server.wg_interface}"
+        )
+        
+        if not success:
+            return {}
+        
+        peers = {}
+        current_peer = None
+        
+        for line in stdout.split('\n'):
+            line = line.strip()
+            if line.startswith('peer:'):
+                current_peer = line.split()[-1]
+                peers[current_peer] = {
+                    'received': 0,
+                    'sent': 0,
+                    'latest_handshake': None,  # timestamp в секундах
+                    'endpoint': None,
+                    'allowed_ips': None
+                }
+            elif current_peer:
+                if 'transfer:' in line:
+                    parts = line.replace(',', '').split()
+                    if 'received' in parts:
+                        rx_idx = parts.index('received')
+                        rx_value = float(parts[rx_idx - 2])
+                        rx_unit = parts[rx_idx - 1].lower()
+                        peers[current_peer]['received'] = cls._convert_to_bytes(rx_value, rx_unit)
+                    if 'sent' in parts:
+                        tx_idx = parts.index('sent')
+                        tx_value = float(parts[tx_idx - 2])
+                        tx_unit = parts[tx_idx - 1].lower()
+                        peers[current_peer]['sent'] = cls._convert_to_bytes(tx_value, tx_unit)
+                elif 'latest handshake:' in line:
+                    # Парсим время последнего handshake
+                    handshake_str = line.replace('latest handshake:', '').strip()
+                    peers[current_peer]['latest_handshake'] = cls._parse_handshake_time(handshake_str)
+                elif 'endpoint:' in line:
+                    peers[current_peer]['endpoint'] = line.split()[-1]
+                elif 'allowed ips:' in line:
+                    peers[current_peer]['allowed_ips'] = line.replace('allowed ips:', '').strip()
+        
+        return peers
+    
+    @staticmethod
+    def _parse_handshake_time(handshake_str: str) -> Optional[int]:
+        """Парсит строку времени handshake в секунды назад"""
+        import re
+        
+        if not handshake_str or handshake_str == '(none)':
+            return None
+        
+        total_seconds = 0
+        
+        # Парсим дни, часы, минуты, секунды
+        patterns = [
+            (r'(\d+)\s*day', 86400),
+            (r'(\d+)\s*hour', 3600),
+            (r'(\d+)\s*minute', 60),
+            (r'(\d+)\s*second', 1),
+        ]
+        
+        for pattern, multiplier in patterns:
+            match = re.search(pattern, handshake_str)
+            if match:
+                total_seconds += int(match.group(1)) * multiplier
+        
+        return total_seconds if total_seconds > 0 else None
+    
+    @staticmethod
+    def get_peer_status(handshake_seconds: Optional[int]) -> str:
+        """Определить статус пира по времени последнего handshake"""
+        if handshake_seconds is None:
+            return "never"  # Никогда не подключался
+        elif handshake_seconds < 180:  # 3 минуты
+            return "online"
+        elif handshake_seconds < 3600:  # 1 час
+            return "recent"
+        elif handshake_seconds < 86400:  # 24 часа
+            return "offline"
+        else:
+            return "inactive"  # Более 24 часов — возможно заблокирован
+    
+    @staticmethod
+    def format_handshake_time(seconds: Optional[int]) -> str:
+        """Форматировать время handshake в читаемый вид"""
+        if seconds is None:
+            return "никогда"
+        
+        if seconds < 60:
+            return f"{seconds} сек назад"
+        elif seconds < 3600:
+            return f"{seconds // 60} мин назад"
+        elif seconds < 86400:
+            return f"{seconds // 3600} ч назад"
+        else:
+            return f"{seconds // 86400} дн назад"
+    
     @staticmethod
     def _convert_to_bytes(value: float, unit: str) -> int:
         """Конвертировать значение в байты"""
