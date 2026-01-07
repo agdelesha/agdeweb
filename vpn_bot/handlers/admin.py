@@ -2040,11 +2040,11 @@ async def admin_configs_monitor(callback: CallbackQuery, state: FSMContext):
     
     from keyboards.admin_kb import get_configs_monitor_kb
     await callback.message.edit_text(
-        f"📡 *Мониторинг конфигов*\n\n"
-        f"🖥 Сервер: *{selected_server.name}*\n"
+        f"📡 Мониторинг конфигов\n\n"
+        f"🖥 Сервер: {selected_server.name}\n"
         f"📊 Всего: {len(configs)} | 🟢 {stats['online']} | 🟡 {stats['recent']} | 🔴 {stats['offline']} | ⚫ {stats['inactive']}\n\n"
         f"{config_text}",
-        parse_mode="Markdown",
+        parse_mode=None,
         reply_markup=get_configs_monitor_kb(servers, selected_server_id, filter_status)
     )
 
