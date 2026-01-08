@@ -7,7 +7,7 @@ WG_INTERFACE="wg0"
 VPN_SUBNET="10.7.0"
 WG_CONF="/etc/wireguard/${WG_INTERFACE}.conf"
 CLIENT_DIR="/etc/wireguard/clients"
-BOT_TOKEN="8442866845:AAGYSqhU-8WFyr1qEsEANHIMRAi1xOsw2C4"
+BOT_TOKEN="${BOT_TOKEN:-}"  # Задать в переменных окружения
 CHAT_ID="906888481"
 
 USERNAME="$1"

@@ -86,13 +86,13 @@ https://github.com/agdelesha/agdevpnbot
 ## 🔑 Ключи и доступы
 
 ### Telegram Bot
-- **Bot Token:** `8442866845:AAGYSqhU-8WFyr1qEsEANHIMRAi1xOsw2C4`
+- **Bot Token:** `[ЗАДАТЬ В .env]`
 - **Bot Username:** `@agdevpnbot`
 - **Admin Telegram ID:** `906888481`
 - **Канал для подписки:** `@agdevpn`
 
 ### DeepSeek AI API
-- **API Key:** `sk-04d762d563e54abf83235b3310aa7d29`
+- **API Key:** `[ЗАДАТЬ В .env]`
 - **API URL:** `https://api.deepseek.com/v1/chat/completions`
 - **Модель:** `deepseek-chat`
 

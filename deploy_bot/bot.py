@@ -16,7 +16,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import asyncssh
 
 # Настройки
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8478281326:AAE-Z19m_1lXyFosuTTSMNm-qygN_LZUFrM")
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # Обязательно задать в .env или переменных окружения
 ADMIN_IDS = [906888481]
 GITHUB_REPO = "https://github.com/agdelesha/agdeweb.git"
 REPO_PATH = "/root/agdeweb"  # Куда клонируется репозиторий
