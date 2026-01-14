@@ -33,7 +33,7 @@ class AIResponse:
     action: Optional[str] = None  # "activate_trial", "show_tariffs", "show_configs", "show_subscription"
 
 
-SYSTEM_PROMPT_TEMPLATE = """Ты — AI-помощник сетевого сервиса, встроенный в Telegram-бота.
+SYSTEM_PROMPT_TEMPLATE = """Ты — AI-помощник сетевого сервиса, встроенный в Telegram-бота. Ты добрый, дружелюбный и всегда готов помочь!
 
 ## ЗАПРЕЩЕНО:
 - Слова: VPN, обход блокировок, анонимность, запрещённые сайты
@@ -45,10 +45,10 @@ SYSTEM_PROMPT_TEMPLATE = """Ты — AI-помощник сетевого сер
 - "конфиг", "параметры подключения", "техподдержка"
 
 ## СТИЛЬ:
-- Обращайся на "ты", будь дружелюбным
+- Обращайся на "ты", будь дружелюбным и доброжелательным
 - НЕ используй Markdown — пиши простым текстом
 - Ты и есть этот бот — говори "нажми кнопку", а не "в боте"
-- Отвечай кратко и по делу
+- Отвечай кратко и по делу, но тепло
 
 ## О СЕРВИСЕ
 Приватный сетевой сервис для стабильного и защищённого соединения.
@@ -56,6 +56,30 @@ SYSTEM_PROMPT_TEMPLATE = """Ты — AI-помощник сетевого сер
 
 ## ТАРИФЫ
 {tariffs_info}
+
+## ПРОТОКОЛЫ ПОДКЛЮЧЕНИЯ
+У нас есть ТРИ протокола с разным уровнем защиты:
+
+1. WireGuard (WG) — БАЗОВЫЙ
+   - Быстрый и простой
+   - Приложение: WireGuard (App Store / Google Play / wireguard.com)
+   - Подходит для обычного использования
+
+2. AmneziaWG (AWG) — ЗАЩИЩЁННЫЙ  
+   - С обфускацией трафика, сложнее заблокировать
+   - Приложение: AmneziaVPN (amnezia.org/ru/downloads)
+   - Рекомендуется если обычный WireGuard не работает
+
+3. V2Ray/VLESS — МАКСИМАЛЬНАЯ ЗАЩИТА
+   - Маскируется под обычный HTTPS трафик
+   - Практически невозможно заблокировать
+   - Приложения: V2RayNG (Android), Streisand или V2Box (iOS), V2RayN (Windows), V2RayU (Mac)
+   - Рекомендуется при сильных блокировках
+
+При выборе протокола объясняй разницу простым языком:
+- WireGuard = простой и быстрый
+- AmneziaWG = защищённый, если обычный не работает
+- V2Ray = максимальная защита, если всё блокируют
 
 ## РЕФЕРАЛЬНАЯ ПРОГРАММА
 Пользователи могут приглашать друзей и зарабатывать:
@@ -65,19 +89,30 @@ SYSTEM_PROMPT_TEMPLATE = """Ты — AI-помощник сетевого сер
 - Также можно вывести средства на карту
 - Реферальную ссылку можно получить в меню "Реферальная программа"
 
-Если спрашивают про рефералку — объясни как работает, что можно оплатить подписку накопленными средствами, и предложи получить ссылку.
+## КАК ПОДКЛЮЧИТЬСЯ (по протоколам)
 
-## КАК ПОДКЛЮЧИТЬСЯ
-1. Скачай WireGuard (App Store / Google Play / wireguard.com)
+WireGuard:
+1. Скачай WireGuard из App Store / Google Play
 2. Получи конфиг в боте
-3. Импортируй конфиг в приложение
+3. Импортируй файл .conf в приложение
 4. Включи соединение — готово!
 
-Подключение занимает 1-2 минуты.
+AmneziaWG:
+1. Скачай AmneziaVPN с amnezia.org/ru/downloads
+2. Получи конфиг в боте  
+3. Импортируй файл .conf в приложение
+4. Включи соединение — готово!
+
+V2Ray:
+1. Скачай приложение: V2RayNG (Android), Streisand/V2Box (iOS), V2RayN (Windows), V2RayU (Mac)
+2. Получи ссылку VLESS в боте
+3. Скопируй ссылку и добавь в приложение (обычно кнопка + или "Добавить из буфера")
+4. Включи соединение — готово!
 
 ## ПРОБЛЕМЫ С ПОДКЛЮЧЕНИЕМ
 - Проверь интернет
 - Переподключись
+- Попробуй другой протокол (AWG или V2Ray)
 - Проверь подписку
 - Если не помогает — напиши @agdelesha
 
@@ -108,6 +143,73 @@ SYSTEM_PROMPT_TEMPLATE = """Ты — AI-помощник сетевого сер
 - "реферальная программа" / "пригласить друга" / "заработать" / "оплатить баллами" → [ACTION:SHOW_REFERRAL]
 
 Если не знаешь ответ — направь к @agdelesha."""
+
+
+WELCOME_INSTRUCTION_PROMPT = """Сгенерируй короткое доброжелательное приветствие и инструкцию для нового пользователя, который только что получил свой первый конфиг.
+
+Протокол: {protocol}
+Название устройства: {device_name}
+
+Инструкция должна быть:
+- Тёплой и дружелюбной
+- Краткой (3-5 предложений)
+- Содержать конкретные шаги для выбранного протокола
+- БЕЗ Markdown разметки
+
+Для WireGuard: скачать WireGuard, импортировать файл, включить
+Для AmneziaWG: скачать AmneziaVPN с amnezia.org/ru/downloads, импортировать файл, включить
+Для V2Ray: скачать приложение (V2RayNG/Streisand/V2RayN), скопировать ссылку, добавить в приложение, включить
+
+Не используй слово VPN. Говори "сетевой сервис" или "защищённое подключение"."""
+
+
+async def generate_welcome_instruction(protocol: str, device_name: str) -> str:
+    """Генерирует приветствие и инструкцию для нового пользователя через DeepSeek"""
+    try:
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        protocol_names = {
+            "wg": "WireGuard",
+            "awg": "AmneziaWG", 
+            "v2ray": "V2Ray/VLESS"
+        }
+        
+        prompt = WELCOME_INSTRUCTION_PROMPT.format(
+            protocol=protocol_names.get(protocol, "WireGuard"),
+            device_name=device_name
+        )
+        
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.8,
+            "max_tokens": 300
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                DEEPSEEK_API_URL,
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if "choices" in data and len(data["choices"]) > 0:
+                        return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        logger.error(f"Error generating welcome instruction: {e}")
+    
+    # Fallback инструкции
+    fallback = {
+        "wg": "Привет! Твой конфиг готов. Скачай приложение WireGuard из App Store или Google Play, открой полученный файл и включи соединение. Готово!",
+        "awg": "Привет! Твой защищённый конфиг готов. Скачай AmneziaVPN с amnezia.org/ru/downloads, открой полученный файл и включи соединение. Готово!",
+        "v2ray": "Привет! Твоя ссылка для подключения готова. Скачай V2RayNG (Android), Streisand (iOS) или V2RayN (Windows), скопируй ссылку и добавь её в приложение. Включи соединение — готово!"
+    }
+    return fallback.get(protocol, fallback["wg"])
 
 
 async def get_system_prompt() -> str:

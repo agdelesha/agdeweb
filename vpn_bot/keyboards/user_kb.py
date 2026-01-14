@@ -77,11 +77,23 @@ def get_back_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def get_subscription_kb(has_active: bool = True) -> InlineKeyboardMarkup:
+def get_subscription_kb(has_active: bool = True, prices: dict = None) -> InlineKeyboardMarkup:
+    """Клавиатура подписки с тарифами сразу"""
     buttons = []
-    if has_active:
-        buttons.append([InlineKeyboardButton(text="💳 Продлить", callback_data="extend_subscription")])
+    
+    # Показываем тарифы сразу
+    if prices:
+        price_30 = prices.get('price_30', 200)
+        price_90 = prices.get('price_90', 400)
+        price_180 = prices.get('price_180', 600)
+    else:
+        price_30, price_90, price_180 = 200, 400, 600
+    
+    buttons.append([InlineKeyboardButton(text=f"30 дней — {price_30}₽", callback_data="tariff_30")])
+    buttons.append([InlineKeyboardButton(text=f"90 дней — {price_90}₽", callback_data="tariff_90")])
+    buttons.append([InlineKeyboardButton(text=f"180 дней — {price_180}₽", callback_data="tariff_180")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")])
+    
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -192,7 +204,7 @@ def get_withdrawal_cancel_kb() -> InlineKeyboardMarkup:
 
 
 def get_protocol_choice_kb(has_wg: bool = True, has_awg: bool = True, has_v2ray: bool = False) -> InlineKeyboardMarkup:
-    """Клавиатура выбора протокола VPN"""
+    """Клавиатура выбора протокола VPN для доп. конфига"""
     buttons = []
     if has_wg:
         buttons.append([InlineKeyboardButton(text="🔒 WireGuard", callback_data="protocol_wg")])
@@ -201,4 +213,16 @@ def get_protocol_choice_kb(has_wg: bool = True, has_awg: bool = True, has_v2ray:
     if has_v2ray:
         buttons.append([InlineKeyboardButton(text="🚀 V2Ray/VLESS (максимальная защита)", callback_data="protocol_v2ray")])
     buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_device_input")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_funnel_protocol_kb(has_wg: bool = True, has_awg: bool = True, has_v2ray: bool = False) -> InlineKeyboardMarkup:
+    """Клавиатура выбора протокола для первого конфига (воронка)"""
+    buttons = []
+    if has_wg:
+        buttons.append([InlineKeyboardButton(text="🔒 WireGuard — простой и быстрый", callback_data="funnel_protocol_wg")])
+    if has_awg:
+        buttons.append([InlineKeyboardButton(text="🛡 AmneziaWG — защищённый", callback_data="funnel_protocol_awg")])
+    if has_v2ray:
+        buttons.append([InlineKeyboardButton(text="🚀 V2Ray — максимальная защита", callback_data="funnel_protocol_v2ray")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)

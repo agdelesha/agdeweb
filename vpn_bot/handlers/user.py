@@ -900,16 +900,45 @@ async def funnel_tariffs(callback: CallbackQuery):
 
 @router.callback_query(F.data == "funnel_get_config")
 async def funnel_get_config(callback: CallbackQuery, bot: Bot):
-    """Шаг 3 — получение конфига после активации пробного периода"""
+    """Шаг 3 — выбор протокола для первого конфига"""
     await callback.answer()
     
-    # Сообщение о создании конфига
+    from keyboards.user_kb import get_funnel_protocol_kb
+    
+    # Проверяем доступность протоколов на серверах
+    has_wg = True
+    has_awg = False
+    has_v2ray = False
+    
+    async with async_session() as session:
+        servers = await WireGuardMultiService.get_all_servers(session)
+        for server in servers:
+            if await WireGuardMultiService.check_awg_available(server):
+                has_awg = True
+            if await WireGuardMultiService.check_v2ray_available(server):
+                has_v2ray = True
+    
+    await callback.message.edit_text(
+        "🔐 *Выбери уровень защиты:*\n\n"
+        "🔒 *WireGuard* — простой и быстрый, подходит для большинства случаев\n\n"
+        "🛡 *AmneziaWG* — с обфускацией трафика, если обычный не работает\n\n"
+        "🚀 *V2Ray* — маскируется под обычный сайт, максимальная защита",
+        parse_mode="Markdown",
+        reply_markup=get_funnel_protocol_kb(has_wg, has_awg, has_v2ray)
+    )
+
+
+@router.callback_query(F.data.startswith("funnel_protocol_"))
+async def funnel_protocol_selected(callback: CallbackQuery, bot: Bot):
+    """Обработка выбора протокола в воронке и создание конфига"""
+    await callback.answer()
+    
+    protocol = callback.data.replace("funnel_protocol_", "")
+    
     await callback.message.edit_text(
         "⏳ *Создаю конфиг...*\n\nПодожди пару секунд",
         parse_mode="Markdown"
     )
-    
-    user = await get_user_by_telegram_id(callback.from_user.id)
     
     # Активируем пробный период
     async with async_session() as session:
@@ -921,18 +950,20 @@ async def funnel_get_config(callback: CallbackQuery, bot: Bot):
             db_user.trial_used = True
             
             # Создаём подписку на 3 дня
+            prices = await get_prices()
+            trial_days = prices.get('trial_days', 3)
             trial_sub = Subscription(
                 user_id=db_user.id,
                 tariff_type="trial",
-                days_total=3,
-                expires_at=datetime.utcnow() + timedelta(days=3)
+                days_total=trial_days,
+                expires_at=datetime.utcnow() + timedelta(days=trial_days)
             )
             session.add(trial_sub)
             await session.commit()
     
-    # Создаём конфиг (только username, без telegram_id)
+    # Создаём конфиг с выбранным протоколом
     username = callback.from_user.username or f"user{callback.from_user.id}"
-    config_name = username
+    config_name = f"{protocol}_{username}"
     
     # Получаем user_id из БД
     db_user_id = None
@@ -943,27 +974,25 @@ async def funnel_get_config(callback: CallbackQuery, bot: Bot):
         if db_user:
             db_user_id = db_user.id
     
-    success, config_data, server_id, error_msg, is_awg = await create_config_multi(
-        config_name, db_user_id, bot, callback.from_user.id, callback.from_user.username
+    # Создаём конфиг с нужным протоколом
+    success, config_data, server_id, error_msg = await create_config_with_protocol(
+        config_name, db_user_id, protocol, bot, callback.from_user.id, callback.from_user.username
     )
     
     if not success:
-        # Проверяем добавлен ли в очередь
         if error_msg == "QUEUE_ADDED":
             await callback.message.edit_text(
                 "⏳ *Все серверы сейчас заняты*\n\n"
                 "Ты добавлен в очередь ожидания.\n"
-                "Как только появится свободное место — конфиг придёт автоматически!\n\n"
-                "Обычно это занимает не более 24 часов.",
+                "Как только появится свободное место — конфиг придёт автоматически!",
                 parse_mode="Markdown"
             )
             return
-        elif error_msg.startswith("ALREADY_IN_QUEUE:"):
+        elif error_msg and error_msg.startswith("ALREADY_IN_QUEUE:"):
             position = error_msg.split(":")[1]
             await callback.message.edit_text(
                 f"⏳ *Ты уже в очереди*\n\n"
-                f"Твоя позиция: *{position}*\n"
-                f"Как только появится свободное место — конфиг придёт автоматически!",
+                f"Твоя позиция: *{position}*",
                 parse_mode="Markdown"
             )
             return
@@ -986,30 +1015,60 @@ async def funnel_get_config(callback: CallbackQuery, bot: Bot):
                 user_id=db_user.id,
                 server_id=server_id,
                 name=config_name,
-                public_key=config_data.public_key,
-                preshared_key=config_data.preshared_key,
-                allowed_ips=config_data.allowed_ips,
-                client_ip=config_data.client_ip,
-                is_active=True
+                public_key=config_data.public_key if hasattr(config_data, 'public_key') else "",
+                preshared_key=config_data.preshared_key if hasattr(config_data, 'preshared_key') else "",
+                allowed_ips=config_data.allowed_ips if hasattr(config_data, 'allowed_ips') else "",
+                client_ip=config_data.client_ip if hasattr(config_data, 'client_ip') else "",
+                is_active=True,
+                protocol_type=protocol
             )
             session.add(new_config)
             await session.commit()
     
-    # Отправляем конфиг с инструкцией для AWG
-    if is_awg:
-        caption = (
-            "📄 Вот твой защищённый конфиг\n\n"
-            "⚠️ *Требуется приложение AmneziaVPN*\n"
-            "Скачай: https://amnezia.org/ru/downloads\n\n"
-            "Через 3 дня пробный период закончится."
+    # Генерируем приветствие через DeepSeek
+    from services.ai_assistant import generate_welcome_instruction
+    welcome_text = await generate_welcome_instruction(protocol, username)
+    
+    prices = await get_prices()
+    trial_days = prices.get('trial_days', 3)
+    
+    # Отправляем приветствие
+    await bot.send_message(
+        callback.from_user.id,
+        f"🎉 {welcome_text}\n\n"
+        f"⏰ Через {trial_days} дня пробный период закончится."
+    )
+    
+    # Отправляем конфиг
+    if protocol == "v2ray":
+        # Для V2Ray отправляем ссылку
+        vless_link = config_data.vless_link if hasattr(config_data, 'vless_link') else ""
+        await bot.send_message(
+            callback.from_user.id,
+            f"🔗 *Твоя ссылка для подключения:*\n\n`{vless_link}`\n\n"
+            "Скопируй и добавь в приложение.",
+            parse_mode="Markdown",
+            reply_markup=get_after_config_kb()
         )
     else:
-        caption = "📄 Вот твой конфиг\n\nЧерез 3 дня пробный период закончится."
+        # Для WG/AWG отправляем файл
+        await send_config_file(
+            bot, callback.from_user.id, config_name, config_data, server_id,
+            caption="📄 Твой конфиг",
+            reply_markup=get_after_config_kb()
+        )
     
-    await send_config_file(
-        bot, callback.from_user.id, config_name, config_data, server_id,
-        caption=caption,
-        reply_markup=get_after_config_kb()
+    # Показываем главное меню
+    menu_text = (
+        "Управление сервисом — кнопками ниже:\n\n"
+        "📱 *Конфиги* — параметры подключения, QR-коды\n"
+        "📊 *Подписка* — статус и продление"
+    )
+    await bot.send_message(
+        callback.from_user.id,
+        menu_text,
+        parse_mode="Markdown",
+        reply_markup=get_main_menu_kb(callback.from_user.id, True)
     )
 
 
@@ -2073,13 +2132,15 @@ async def my_subscription(callback: CallbackQuery):
         total_traffic = format_bytes(total_received + total_sent)
         traffic_text = f"\n\n📊 *Общий трафик:* {total_traffic}" if (total_received + total_sent) > 0 else ""
         
+        prices = await get_prices()
         await callback.message.edit_text(
             f"{status_text}{gift_text}\n\n"
             f"📅 Действует до: {expires_text}\n"
             f"📱 Конфигов: {len(user.configs)}"
-            f"{traffic_text}",
+            f"{traffic_text}\n\n"
+            f"💳 *Продлить подписку:*",
             parse_mode="Markdown",
-            reply_markup=get_subscription_kb(has_active=True)
+            reply_markup=get_subscription_kb(has_active=True, prices=prices)
         )
 
 
