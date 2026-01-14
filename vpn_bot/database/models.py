@@ -87,6 +87,7 @@ class Config(Base):
     client_ip: Mapped[str] = mapped_column(String(50), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    protocol_type: Mapped[str] = mapped_column(String(20), default="wg")  # wg, awg, v2ray
     
     # Накопительный трафик (сохраняется периодически)
     total_received: Mapped[int] = mapped_column(BigInteger, default=0)  # входящий трафик в байтах

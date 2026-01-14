@@ -950,3 +950,190 @@ rm -f "$CONFIG_FILE" "$QR_PNG"
 
 echo "OK: $USERNAME removed"
 '''
+    
+    @classmethod
+    async def check_awg_available(cls, server: Server) -> bool:
+        """Проверить доступен ли AmneziaWG на сервере"""
+        if LOCAL_MODE:
+            return False
+        
+        success, stdout, stderr = await cls._ssh_execute(
+            server,
+            "which awg && test -f /etc/amnezia/amneziawg/awg0.conf && echo 'AWG_OK'"
+        )
+        return success and "AWG_OK" in stdout
+    
+    @classmethod
+    async def create_awg_config(
+        cls, 
+        username: str, 
+        server: Server
+    ) -> Tuple[bool, Optional[ConfigData], str]:
+        """Создать защищённый конфиг AmneziaWG с обфускацией"""
+        
+        if LOCAL_MODE:
+            logger.info(f"[LOCAL_MODE] Создание AWG конфига для {username}")
+            return True, ConfigData(
+                name=username,
+                public_key="LOCAL_MODE_AWG_PUBLIC_KEY",
+                preshared_key="LOCAL_MODE_AWG_PSK",
+                allowed_ips="10.8.0.100/32",
+                client_ip="10.8.0.100",
+                config_content="[Interface]\nPrivateKey = LOCAL_MODE_AWG\nAddress = 10.8.0.100/24\nDNS = 1.1.1.1\nJc = 4",
+                qr_content=b"",
+                server_id=server.id if server else 0
+            ), "AWG конфиг создан (LOCAL_MODE)"
+        
+        logger.info(f"Создание AWG конфига {username} на сервере {server.name} ({server.host})")
+        
+        # Создать конфиг через AWG скрипт
+        success, stdout, stderr = await cls._ssh_execute(
+            server, 
+            f"/usr/local/bin/awg-new-conf.sh {username}"
+        )
+        
+        if not success:
+            logger.error(f"Ошибка создания AWG конфига на {server.host}: {stderr}")
+            return False, None, stderr or "Ошибка создания AWG конфига"
+        
+        # Парсим вывод скрипта для получения public_key
+        public_key = None
+        for line in stdout.split('\n'):
+            if line.startswith('PUBLIC_KEY:'):
+                public_key = line.split(':')[1].strip()
+                break
+        
+        # Прочитать созданные файлы
+        config_path = f"/etc/amnezia/amneziawg/clients/{username}.conf"
+        qr_path = f"/etc/amnezia/amneziawg/clients/{username}.png"
+        
+        config_content = await cls._ssh_read_file(server, config_path)
+        qr_content = await cls._ssh_read_file(server, qr_path)
+        
+        if not config_content:
+            return False, None, "Не удалось прочитать созданный AWG конфиг"
+        
+        # Парсим IP из конфига
+        config_text = config_content.decode('utf-8')
+        client_ip = "10.8.0.2"
+        for line in config_text.split('\n'):
+            if line.startswith('Address=') or line.startswith('Address ='):
+                addr = line.split('=')[1].strip().split(',')[0].split('/')[0]
+                client_ip = addr
+                break
+        
+        return True, ConfigData(
+            name=username,
+            public_key=public_key or "UNKNOWN",
+            preshared_key="",
+            allowed_ips=f"{client_ip}/32",
+            client_ip=client_ip,
+            config_content=config_text,
+            qr_content=qr_content or b"",
+            server_id=server.id
+        ), "AWG конфиг создан"
+    
+    @classmethod
+    async def delete_awg_config(cls, username: str, server: Server, public_key: str = None) -> Tuple[bool, str]:
+        """Удалить AWG конфиг с сервера"""
+        
+        if LOCAL_MODE:
+            logger.info(f"[LOCAL_MODE] Удаление AWG конфига {username}")
+            return True, "AWG конфиг удален (LOCAL_MODE)"
+        
+        logger.info(f"Удаление AWG конфига {username} с сервера {server.name}")
+        
+        # Удаляем через скрипт
+        success, stdout, stderr = await cls._ssh_execute(
+            server,
+            f"/usr/local/bin/awg-remove-client.sh {username} {public_key or ''}"
+        )
+        
+        if success:
+            logger.info(f"AWG конфиг {username} успешно удалён с сервера {server.name}")
+            return True, f"AWG конфиг удален с сервера {server.name}"
+        
+        logger.error(f"Ошибка удаления AWG конфига {username} с {server.name}: {stderr}")
+        return False, stderr or "Ошибка удаления"
+    
+    @classmethod
+    async def check_v2ray_available(cls, server: Server) -> bool:
+        """Проверить доступность V2Ray/Xray на сервере"""
+        if LOCAL_MODE:
+            return False
+        
+        success, stdout, stderr = await cls._ssh_execute(
+            server,
+            "test -f /usr/local/bin/v2ray-new-conf.sh && systemctl is-active xray >/dev/null 2>&1 && echo 'OK'"
+        )
+        return success and 'OK' in stdout
+    
+    @classmethod
+    async def create_v2ray_config(cls, username: str, server: Server) -> Tuple[bool, Optional[ConfigData], str]:
+        """Создать V2Ray/VLESS конфиг на сервере"""
+        
+        if LOCAL_MODE:
+            logger.info(f"[LOCAL_MODE] Создание V2Ray конфига {username}")
+            return False, None, "V2Ray не поддерживается в LOCAL_MODE"
+        
+        logger.info(f"Создание V2Ray конфига {username} на сервере {server.name}")
+        
+        # Создаём конфиг через скрипт
+        success, stdout, stderr = await cls._ssh_execute(
+            server,
+            f"/usr/local/bin/v2ray-new-conf.sh {username}"
+        )
+        
+        if not success:
+            logger.error(f"Ошибка создания V2Ray конфига: {stderr}")
+            return False, None, stderr or "Ошибка создания V2Ray конфига"
+        
+        # Парсим вывод
+        uuid = None
+        vless_link = None
+        for line in stdout.split('\n'):
+            if line.startswith('UUID:'):
+                uuid = line.split(':', 1)[1].strip()
+            elif line.startswith('VLESS_LINK:'):
+                vless_link = line.split(':', 1)[1].strip()
+        
+        if not vless_link:
+            return False, None, "Не удалось получить VLESS ссылку"
+        
+        # Прочитать QR-код
+        qr_path = f"/usr/local/etc/xray/clients/{username}.png"
+        qr_content = await cls._ssh_read_file(server, qr_path)
+        
+        return True, ConfigData(
+            name=username,
+            public_key=uuid or "UNKNOWN",
+            preshared_key="",
+            allowed_ips="",
+            client_ip="",
+            config_content=vless_link,
+            qr_content=qr_content or b"",
+            server_id=server.id
+        ), "V2Ray конфиг создан"
+    
+    @classmethod
+    async def delete_v2ray_config(cls, username: str, server: Server) -> Tuple[bool, str]:
+        """Удалить V2Ray конфиг с сервера"""
+        
+        if LOCAL_MODE:
+            logger.info(f"[LOCAL_MODE] Удаление V2Ray конфига {username}")
+            return True, "V2Ray конфиг удален (LOCAL_MODE)"
+        
+        logger.info(f"Удаление V2Ray конфига {username} с сервера {server.name}")
+        
+        # Удаляем через скрипт
+        success, stdout, stderr = await cls._ssh_execute(
+            server,
+            f"/usr/local/bin/v2ray-remove-client.sh {username}"
+        )
+        
+        if success:
+            logger.info(f"V2Ray конфиг {username} успешно удалён с сервера {server.name}")
+            return True, f"V2Ray конфиг удален с сервера {server.name}"
+        
+        logger.error(f"Ошибка удаления V2Ray конфига {username} с {server.name}: {stderr}")
+        return False, stderr or "Ошибка удаления"

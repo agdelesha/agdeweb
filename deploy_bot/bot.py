@@ -7,6 +7,9 @@ import logging
 import os
 import json
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart, Command

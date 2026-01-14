@@ -183,9 +183,10 @@ def get_phone_keyboard() -> ReplyKeyboardMarkup:
 async def create_config_multi(config_name: str, user_id: int, bot=None, user_telegram_id: int = None, username: str = None) -> tuple:
     """
     Создать конфиг с использованием мультисервера.
-    Возвращает (success, config_data, server_id, error_msg)
+    Возвращает (success, config_data, server_id, error_msg, is_awg)
     
     Если все серверы заполнены и bot передан - добавляет пользователя в очередь.
+    Приоритет: AmneziaWG (если доступен) > обычный WireGuard
     """
     from services.config_queue import ConfigQueueService
     
@@ -196,13 +197,26 @@ async def create_config_multi(config_name: str, user_id: int, bot=None, user_tel
         if not servers:
             # Нет серверов - используем старый метод (локальный)
             success, config_data, msg = await WireGuardService.create_config(config_name)
-            return success, config_data, None, msg
+            return success, config_data, None, msg, False
         
-        # Используем мультисервер
-        success, config_data, msg = await WireGuardMultiService.create_config(config_name, session)
+        # Выбираем лучший сервер
+        server = await WireGuardMultiService.get_best_server(session)
+        if not server:
+            return False, None, None, "Нет доступных серверов", False
         
-        if success and config_data:
-            return True, config_data, config_data.server_id, msg
+        # Проверяем доступность AWG на сервере
+        has_awg = await WireGuardMultiService.check_awg_available(server)
+        
+        if has_awg:
+            # Используем AmneziaWG (защищённый)
+            success, config_data, msg = await WireGuardMultiService.create_awg_config(config_name, server)
+            if success and config_data:
+                return True, config_data, config_data.server_id, msg, True
+        else:
+            # Используем обычный WireGuard
+            success, config_data, msg = await WireGuardMultiService.create_config(config_name, session, server)
+            if success and config_data:
+                return True, config_data, config_data.server_id, msg, False
         
         # Если не удалось создать из-за нехватки серверов - добавляем в очередь
         if "Нет доступных серверов" in msg and bot and user_telegram_id:
@@ -211,12 +225,57 @@ async def create_config_multi(config_name: str, user_id: int, bot=None, user_tel
             if not already_in_queue:
                 await ConfigQueueService.add_to_queue(user_id, config_name)
                 await ConfigQueueService.notify_admin_no_servers(bot, user_telegram_id, username)
-                return False, None, None, "QUEUE_ADDED"
+                return False, None, None, "QUEUE_ADDED", False
             else:
                 position = await ConfigQueueService.get_user_queue_position(user_id)
-                return False, None, None, f"ALREADY_IN_QUEUE:{position}"
+                return False, None, None, f"ALREADY_IN_QUEUE:{position}", False
         
-        return False, None, None, msg
+        return False, None, None, msg, False
+
+
+async def create_config_with_protocol(config_name: str, user_id: int, protocol: str) -> tuple:
+    """
+    Создать конфиг с указанным протоколом.
+    Возвращает (success, config_data, server_id, error_msg, protocol_type)
+    
+    protocol: "wg", "awg", "v2ray"
+    """
+    async with async_session() as session:
+        servers = await WireGuardMultiService.get_all_servers(session)
+        
+        if not servers:
+            return False, None, None, "Нет доступных серверов", protocol
+        
+        # Выбираем сервер с поддержкой нужного протокола
+        target_server = None
+        for server in servers:
+            if protocol == "v2ray":
+                if await WireGuardMultiService.check_v2ray_available(server):
+                    target_server = server
+                    break
+            elif protocol == "awg":
+                if await WireGuardMultiService.check_awg_available(server):
+                    target_server = server
+                    break
+            else:  # wg
+                target_server = server
+                break
+        
+        if not target_server:
+            return False, None, None, f"Нет серверов с поддержкой {protocol}", protocol
+        
+        # Создаём конфиг
+        if protocol == "v2ray":
+            success, config_data, msg = await WireGuardMultiService.create_v2ray_config(config_name, target_server)
+        elif protocol == "awg":
+            success, config_data, msg = await WireGuardMultiService.create_awg_config(config_name, target_server)
+        else:  # wg
+            success, config_data, msg = await WireGuardMultiService.create_config(config_name, session, target_server)
+        
+        if success and config_data:
+            return True, config_data, config_data.server_id, msg, protocol
+        
+        return False, None, None, msg, protocol
 
 
 async def send_config_file(bot: Bot, chat_id: int, config_name: str, config_data, server_id, caption: str, reply_markup=None):
@@ -305,10 +364,9 @@ async def cmd_akak(message: Message, bot: Bot):
     
     # Показываем главное меню
     has_sub = await check_has_subscription(message.from_user.id)
-    how_to_seen = await get_user_how_to_seen(message.from_user.id)
     await message.answer(
         "👆 Готово!",
-        reply_markup=get_main_menu_kb(message.from_user.id, has_sub, how_to_seen)
+        reply_markup=get_main_menu_kb(message.from_user.id, has_sub)
     )
 
 
@@ -418,17 +476,15 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     
     if has_sub:
         # Есть подписка — главное меню
-        how_to_seen = await get_user_how_to_seen(message.from_user.id)
         menu_text = (
             "Управление сервисом — кнопками ниже:\n\n"
-            "📱 *Конфиги* — параметры подключения, QR-коды\n"
-            "📊 *Подписка* — детали подписки и продление\n\n"
-            "💬 Есть вопросы? Просто напиши — AI-помощник на связи!"
+            " *Конфиги* — параметры подключения, QR-коды\n"
+            " *Подписка* — статус и продление"
         )
         msg = await message.answer(
             menu_text,
             parse_mode="Markdown",
-            reply_markup=get_main_menu_kb(message.from_user.id, True, how_to_seen)
+            reply_markup=get_main_menu_kb(message.from_user.id, True)
         )
     else:
         # Нет подписки — воронка
@@ -652,7 +708,6 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     has_sub = await check_has_subscription(callback.from_user.id)
     
     if has_sub:
-        how_to_seen = await get_user_how_to_seen(callback.from_user.id)
         menu_text = (
             "Управление сервисом — кнопками ниже:\n\n"
             "📱 *Конфиги* — параметры подключения, QR-коды\n"
@@ -662,7 +717,7 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(
             menu_text,
             parse_mode="Markdown",
-            reply_markup=get_main_menu_kb(callback.from_user.id, True, how_to_seen)
+            reply_markup=get_main_menu_kb(callback.from_user.id, True)
         )
     else:
         # Нет подписки — возвращаем к воронке
@@ -888,7 +943,7 @@ async def funnel_get_config(callback: CallbackQuery, bot: Bot):
         if db_user:
             db_user_id = db_user.id
     
-    success, config_data, server_id, error_msg = await create_config_multi(
+    success, config_data, server_id, error_msg, is_awg = await create_config_multi(
         config_name, db_user_id, bot, callback.from_user.id, callback.from_user.username
     )
     
@@ -940,10 +995,20 @@ async def funnel_get_config(callback: CallbackQuery, bot: Bot):
             session.add(new_config)
             await session.commit()
     
-    # Отправляем конфиг
+    # Отправляем конфиг с инструкцией для AWG
+    if is_awg:
+        caption = (
+            "📄 Вот твой защищённый конфиг\n\n"
+            "⚠️ *Требуется приложение AmneziaVPN*\n"
+            "Скачай: https://amnezia.org/ru/downloads\n\n"
+            "Через 3 дня пробный период закончится."
+        )
+    else:
+        caption = "📄 Вот твой конфиг\n\nЧерез 3 дня пробный период закончится."
+    
     await send_config_file(
         bot, callback.from_user.id, config_name, config_data, server_id,
-        caption="📄 Вот твой конфиг\n\nЧерез 3 дня пробный период закончится.",
+        caption=caption,
         reply_markup=get_after_config_kb()
     )
 
@@ -1031,7 +1096,7 @@ async def tariff_trial(callback: CallbackQuery, bot: Bot):
         await callback.message.edit_text("⏳ Создаю конфиг...")
         
         config_name = user.username if user.username else f"user{callback.from_user.id}"
-        success, config_data, server_id, msg = await create_config_multi(config_name, callback.from_user.id)
+        success, config_data, server_id, msg, is_awg = await create_config_multi(config_name, callback.from_user.id)
         
         if not success:
             await callback.message.edit_text(
@@ -1072,12 +1137,16 @@ async def tariff_trial(callback: CallbackQuery, bot: Bot):
             parse_mode="Markdown"
         )
         
+        if is_awg:
+            caption = "📄 Твой защищённый конфиг\n\n⚠️ *Требуется приложение AmneziaVPN*\nСкачай: https://amnezia.org/ru/downloads\n\n📷 QR-код — в кнопке \"Конфиги\""
+        else:
+            caption = "📄 Твой WireGuard конфиг\n\n📷 Если нужен QR-код, его можно найти в кнопке \"Конфиги\""
+        
         await send_config_file(
             bot, callback.from_user.id, config_name, config_data, server_id,
-            caption="📄 Твой WireGuard конфиг\n\n📷 Если нужен QR-код, его можно найти в кнопке \"Конфиги\""
+            caption=caption
         )
         
-        how_to_seen = await get_user_how_to_seen(callback.from_user.id)
         menu_text = (
             "Управление сервисом — кнопками ниже:\n\n"
             "📱 *Конфиги* — параметры подключения, QR-коды\n"
@@ -1088,7 +1157,7 @@ async def tariff_trial(callback: CallbackQuery, bot: Bot):
             callback.from_user.id,
             menu_text,
             parse_mode="Markdown",
-            reply_markup=get_main_menu_kb(callback.from_user.id, True, how_to_seen)
+            reply_markup=get_main_menu_kb(callback.from_user.id, True)
         )
 
 
@@ -1428,9 +1497,10 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
         new_expires = None
         
         server_id = None
+        is_awg = False
         if not has_config:
             config_name = user_username if user_username else f"user{user_telegram_id}"
-            success, config_data, server_id, msg = await create_config_multi(config_name, user_telegram_id)
+            success, config_data, server_id, msg, is_awg = await create_config_multi(config_name, user_telegram_id)
             if success:
                 config_created = True
             else:
@@ -1510,12 +1580,15 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
         )
         
         if config_created:
+            if is_awg:
+                caption = "📄 Твой защищённый конфиг\n\n⚠️ *Требуется приложение AmneziaVPN*\nСкачай: https://amnezia.org/ru/downloads\n\n📷 QR-код — в кнопке \"Конфиги\""
+            else:
+                caption = "📄 Твой WireGuard конфиг\n\n📷 Если нужен QR-код, его можно найти в кнопке \"Конфиги\""
             await send_config_file(
                 bot, user_telegram_id, config_name, config_data, server_id,
-                caption="📄 Твой WireGuard конфиг\n\n📷 Если нужен QR-код, его можно найти в кнопке \"Конфиги\""
+                caption=caption
             )
         
-        how_to_seen = await get_user_how_to_seen(user_telegram_id)
         menu_text = (
             "Управление сервисом — кнопками ниже:\n\n"
             "📱 *Конфиги* — параметры подключения, QR-коды\n"
@@ -1525,7 +1598,7 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
         await message.answer(
             menu_text,
             parse_mode="Markdown",
-            reply_markup=get_main_menu_kb(user_telegram_id, True, how_to_seen)
+            reply_markup=get_main_menu_kb(user_telegram_id, True)
         )
         
         discount_info = "🎁 Скидка 50% (реферал)\n" if has_referral_discount else ""
@@ -1916,13 +1989,19 @@ async def user_confirm_delete_config(callback: CallbackQuery):
         
         config_name = config.name
         server_id = config.server_id
+        protocol_type = getattr(config, 'protocol_type', 'wg') or 'wg'
         
-        # Удаляем конфиг с сервера WireGuard (если сервер существует)
+        # Удаляем конфиг с сервера (если сервер существует)
         if server_id:
             server = await WireGuardMultiService.get_server_by_id(session, server_id)
             if server:
                 try:
-                    await WireGuardMultiService.delete_config(server, config_name)
+                    if protocol_type == "v2ray":
+                        await WireGuardMultiService.delete_v2ray_config(config_name, server)
+                    elif protocol_type == "awg":
+                        await WireGuardMultiService.delete_awg_config(config_name, server, config.public_key)
+                    else:
+                        await WireGuardMultiService.delete_config(config_name, server, config.public_key)
                 except Exception as e:
                     logger.error(f"Ошибка удаления конфига с сервера: {e}")
         
@@ -2062,6 +2141,37 @@ async def request_extra_config(callback: CallbackQuery, state: FSMContext, bot: 
             )
             return
     
+    # Проверяем доступные протоколы на серверах
+    from keyboards.user_kb import get_protocol_choice_kb
+    from services.wireguard_multi import WireGuardMultiService
+    
+    async with async_session() as session:
+        servers = await WireGuardMultiService.get_all_servers(session)
+        has_awg = False
+        has_v2ray = False
+        for srv in servers:
+            if await WireGuardMultiService.check_awg_available(srv):
+                has_awg = True
+            if await WireGuardMultiService.check_v2ray_available(srv):
+                has_v2ray = True
+    
+    await callback.message.edit_text(
+        "📱 *Дополнительный конфиг*\n\n"
+        "Выбери тип подключения:",
+        parse_mode="Markdown",
+        reply_markup=get_protocol_choice_kb(has_wg=True, has_awg=has_awg, has_v2ray=has_v2ray)
+    )
+    await state.set_state(ConfigRequestStates.waiting_for_protocol)
+
+
+@router.callback_query(F.data.startswith("protocol_"))
+async def select_protocol(callback: CallbackQuery, state: FSMContext):
+    """Обработчик выбора протокола"""
+    protocol = callback.data.replace("protocol_", "")  # wg, awg, v2ray
+    
+    await callback.answer()
+    await state.update_data(selected_protocol=protocol)
+    
     from keyboards.user_kb import get_device_input_cancel_kb
     await callback.message.edit_text(
         "📱 *Дополнительный конфиг*\n\n"
@@ -2076,6 +2186,10 @@ async def request_extra_config(callback: CallbackQuery, state: FSMContext, bot: 
 @router.message(ConfigRequestStates.waiting_for_device)
 async def process_device_request(message: Message, state: FSMContext, bot: Bot):
     device_name = message.text
+    
+    # Получаем выбранный протокол из состояния
+    state_data = await state.get_data()
+    selected_protocol = state_data.get("selected_protocol", "awg")  # по умолчанию awg
     
     async with async_session() as session:
         stmt = select(User).where(
@@ -2118,24 +2232,27 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
             f"🆔 ID: {message.from_user.id}\n"
             f"{phone_info}\n"
             f"📱 Текущие конфиги ({config_count}): {configs_info}\n\n"
-            f"🖥 Устройство: {device_name}",
+            f"🖥 Устройство: {device_name}\n"
+            f"🔒 Протокол: {selected_protocol}",
             reply_markup=get_config_request_kb(user_id)
         )
     else:
         # Создаём конфиг автоматически
-        # Название: никустройство (транслитерация + очистка от спецсимволов)
+        # Название: протокол_ник_устройство
         base_name = username or f"user{telegram_id}"
-        # Транслитерируем русские буквы в английские
         device_translit = transliterate_ru_to_en(device_name)
-        clean_device = re.sub(r'[^\w]', '', device_translit)[:15]
-        config_name = f"{base_name}{clean_device}"
+        clean_device = re.sub(r'[^\w]', '', device_translit)[:12]
+        config_name = f"{selected_protocol}_{base_name}_{clean_device}"
         
         # Отправляем сообщение "подождите"
         wait_msg = await message.answer(
             "⏳ Создаю конфиг, подожди несколько секунд..."
         )
         
-        success, config_data, server_id, msg = await create_config_multi(config_name, telegram_id)
+        # Создаём конфиг в зависимости от выбранного протокола
+        success, config_data, server_id, msg, protocol_type = await create_config_with_protocol(
+            config_name, telegram_id, selected_protocol
+        )
         
         # Удаляем сообщение "подождите"
         try:
@@ -2158,19 +2275,43 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
                 server_id=server_id,
                 name=config_name,
                 public_key=config_data.public_key,
-                preshared_key=config_data.preshared_key,
-                allowed_ips=config_data.allowed_ips,
-                client_ip=config_data.client_ip,
-                is_active=True
+                preshared_key=config_data.preshared_key or "",
+                allowed_ips=config_data.allowed_ips or "",
+                client_ip=config_data.client_ip or "",
+                is_active=True,
+                protocol_type=protocol_type
             )
             session.add(new_config)
             await session.commit()
         
         # Отправляем конфиг пользователю
-        await send_config_file(
-            bot, message.from_user.id, config_name, config_data, server_id,
-            caption=f"📄 Твой новый конфиг для {device_name}\n\n📷 QR-код можно найти в меню «Конфиги»"
-        )
+        if protocol_type == "v2ray":
+            caption = f"📄 Твой V2Ray конфиг для {device_name}\n\n⚠️ *Требуется приложение V2RayNG или Streisand*\n📱 Android: V2RayNG\n📱 iOS: Streisand или V2Box"
+            # Для V2Ray отправляем ссылку как текст
+            await message.answer(
+                f"🚀 *V2Ray/VLESS конфиг создан!*\n\n"
+                f"📱 Устройство: {device_name}\n\n"
+                f"📋 Ссылка для импорта:\n`{config_data.config_content}`\n\n"
+                f"⚠️ Скопируй ссылку и импортируй в приложение:\n"
+                f"• Android: V2RayNG\n"
+                f"• iOS: Streisand, V2Box\n"
+                f"• Windows: V2RayN\n"
+                f"• Mac: V2RayU",
+                parse_mode="Markdown",
+                reply_markup=get_main_menu_kb(message.from_user.id, True)
+            )
+        elif protocol_type == "awg":
+            caption = f"📄 Твой защищённый конфиг для {device_name}\n\n⚠️ *Требуется приложение AmneziaVPN*\nСкачай: https://amnezia.org/ru/downloads"
+            await send_config_file(
+                bot, message.from_user.id, config_name, config_data, server_id,
+                caption=caption
+            )
+        else:
+            caption = f"📄 Твой WireGuard конфиг для {device_name}\n\n📷 QR-код можно найти в меню «Конфиги»"
+            await send_config_file(
+                bot, message.from_user.id, config_name, config_data, server_id,
+                caption=caption
+            )
         
         await message.answer(
             "✅ Конфиг создан!",
@@ -2492,7 +2633,7 @@ async def activate_trial_from_ai(message: Message, bot: Bot):
     username = message.from_user.username or f"user{message.from_user.id}"
     config_name = username
     
-    success, config_data, server_id, error_msg = await create_config_multi(config_name, message.from_user.id)
+    success, config_data, server_id, error_msg, is_awg = await create_config_multi(config_name, message.from_user.id)
     
     if not success:
         await message.answer(
@@ -2522,10 +2663,13 @@ async def activate_trial_from_ai(message: Message, bot: Bot):
             await session.commit()
     
     # Отправляем конфиг
+    if is_awg:
+        caption = "🎉 Пробный период активирован! Вот твой защищённый конфиг на 3 дня.\n\n⚠️ *Требуется приложение AmneziaVPN*\nСкачай: https://amnezia.org/ru/downloads"
+    else:
+        caption = "🎉 Пробный период активирован! Вот твой конфиг на 3 дня.\n\nСкачай WireGuard и импортируй этот файл."
     await send_config_file(
         bot, message.from_user.id, config_name, config_data, server_id,
-        caption="🎉 Пробный период активирован! Вот твой конфиг на 3 дня.\n\n"
-                "Скачай WireGuard и импортируй этот файл."
+        caption=caption
     )
 
 
@@ -2655,3 +2799,104 @@ async def referral_withdraw(callback: CallbackQuery, state: FSMContext):
             parse_mode="Markdown",
             reply_markup=get_withdrawal_cancel_kb()
         )
+
+
+@router.callback_query(F.data.startswith("upgrade_config_"))
+async def upgrade_config_to_awg(callback: CallbackQuery, bot: Bot):
+    """Заменить обычный конфиг на защищённый AmneziaWG"""
+    await callback.answer("🛡 Создаю защищённый конфиг...")
+    config_id = int(callback.data.replace("upgrade_config_", ""))
+    
+    async with async_session() as session:
+        stmt = select(Config).where(Config.id == config_id).options(selectinload(Config.user), selectinload(Config.server))
+        result = await session.execute(stmt)
+        config = result.scalar_one_or_none()
+        
+        if not config or config.user.telegram_id != callback.from_user.id:
+            await callback.answer("Конфиг не найден", show_alert=True)
+            return
+        
+        if not config.server_id:
+            await callback.answer("Сервер недоступен", show_alert=True)
+            return
+        
+        server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+        if not server:
+            await callback.answer("Сервер не найден", show_alert=True)
+            return
+        
+        # Проверяем доступность AWG
+        has_awg = await WireGuardMultiService.check_awg_available(server)
+        if not has_awg:
+            await callback.answer("AmneziaWG недоступен на этом сервере", show_alert=True)
+            return
+        
+        old_config_name = config.name
+        old_public_key = config.public_key
+        
+        # Создаём новый AWG конфиг с тем же именем + суффикс _awg
+        new_config_name = f"{old_config_name}_awg"
+        
+        # Создаём AWG конфиг
+        success, awg_data, error = await WireGuardMultiService.create_awg_config(new_config_name, server)
+        
+        if not success or not awg_data:
+            await callback.message.answer(
+                f"❌ Ошибка создания защищённого конфига:\n{error}",
+                parse_mode="Markdown"
+            )
+            return
+        
+        # Удаляем старый конфиг с сервера WireGuard
+        try:
+            await WireGuardMultiService.delete_config(old_config_name, server, old_public_key)
+        except Exception as e:
+            logger.error(f"Ошибка удаления старого конфига: {e}")
+        
+        # Обновляем запись в БД
+        config.name = new_config_name
+        config.public_key = awg_data.public_key
+        config.preshared_key = awg_data.preshared_key
+        config.allowed_ips = awg_data.allowed_ips
+        config.client_ip = awg_data.client_ip
+        config.config_content = awg_data.config_content
+        
+        await session.commit()
+        
+        # Отправляем новый конфиг пользователю
+        await callback.message.edit_text(
+            f"🛡 *Конфиг заменён на защищённый!*\n\n"
+            f"📱 Новый конфиг: `{new_config_name}`\n"
+            f"🌍 Сервер: {server.name}\n"
+            f"IP: `{awg_data.client_ip}`\n\n"
+            f"⚠️ *ВАЖНО:*\n"
+            f"1. Удали старый конфиг `{old_config_name}` из приложения WireGuard\n"
+            f"2. Скачай приложение *AmneziaVPN* (не обычный WireGuard!)\n"
+            f"   • iOS: App Store → AmneziaVPN\n"
+            f"   • Android: Google Play → AmneziaVPN\n"
+            f"   • Windows/Mac: amnezia.org\n"
+            f"3. Импортируй новый конфиг в AmneziaVPN\n\n"
+            f"📥 Скачай AmneziaVPN: https://amnezia.org/ru/downloads\n\n"
+            f"🔒 Этот конфиг использует обфускацию и обходит блокировки провайдеров!",
+            parse_mode="Markdown",
+            reply_markup=get_main_menu_kb(callback.from_user.id, True)
+        )
+        
+        # Отправляем файл конфига
+        from aiogram.types import BufferedInputFile
+        
+        await bot.send_document(
+            callback.from_user.id,
+            document=BufferedInputFile(awg_data.config_content.encode('utf-8'), filename=f"{new_config_name}.conf"),
+            caption=f"📥 Защищённый конфиг `{new_config_name}`\n\n⚠️ Используй *AmneziaVPN* для подключения!\nСкачай: https://amnezia.org/ru/downloads",
+            parse_mode="Markdown"
+        )
+        
+        # Отправляем QR-код если есть
+        if awg_data.qr_content:
+            await bot.send_photo(
+                callback.from_user.id,
+                photo=BufferedInputFile(awg_data.qr_content, filename=f"{new_config_name}_qr.png"),
+                caption=f"📷 QR-код для `{new_config_name}`",
+                parse_mode="Markdown"
+            )

@@ -11,6 +11,7 @@ class PaymentStates(StatesGroup):
 
 
 class ConfigRequestStates(StatesGroup):
+    waiting_for_protocol = State()
     waiting_for_device = State()
 
 

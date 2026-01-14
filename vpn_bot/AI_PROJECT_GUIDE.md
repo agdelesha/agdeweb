@@ -254,19 +254,95 @@ vpn_bot/
 
 ---
 
-## 🔧 WireGuard интеграция
+## 🔧 VPN Протоколы
 
-### Скрипты на сервере
-- **Создание конфига:** `/usr/local/bin/wg-new-conf.sh <name>`
-- **Удаление конфига:** `/usr/local/bin/wg-remove-client.sh <name>`
+Бот поддерживает **три протокола VPN** с разным уровнем защиты:
 
-### Пути к файлам
-- **Конфиги:** `/etc/wireguard/clients/<name>.conf`
-- **QR-коды:** `/etc/wireguard/clients/<name>.png`
-- **Основной конфиг WG:** `/etc/wireguard/wg0.conf`
+### 1. WireGuard (WG) — Базовый
+- **Порт:** 443
+- **Скрипты:**
+  - Создание: `/usr/local/bin/wg-new-conf.sh <name>`
+  - Удаление: `/usr/local/bin/wg-remove-client.sh <name>`
+- **Пути:**
+  - Конфиги: `/etc/wireguard/clients/<name>.conf`
+  - QR-коды: `/etc/wireguard/clients/<name>.png`
+- **Клиенты:** WireGuard (все платформы)
+- **Особенности:** Быстрый, простой, но легко детектируется DPI
+
+### 2. AmneziaWG (AWG) — Защищённый
+- **Порт:** 51820
+- **Скрипты:**
+  - Создание: `/usr/local/bin/awg-new-conf.sh <name>`
+  - Удаление: `/usr/local/bin/awg-remove-client.sh <name>`
+- **Пути:**
+  - Конфиги: `/etc/amnezia/amneziawg/clients/<name>.conf`
+  - QR-коды: `/etc/amnezia/amneziawg/clients/<name>.png`
+  - Основной конфиг: `/etc/amnezia/amneziawg/awg0.conf`
+- **Клиенты:** AmneziaVPN (https://amnezia.org/ru/downloads)
+- **Особенности:** 
+  - Обфускация трафика параметрами Jc, Jmin, Jmax, S1, S2, H1-H4
+  - Устойчив к DPI блокировкам
+  - Требует специальное приложение AmneziaVPN
+
+### 3. V2Ray/Xray (VLESS + Reality) — Максимальная защита
+- **Порт:** 8443
+- **Скрипты:**
+  - Создание: `/usr/local/bin/v2ray-new-conf.sh <name>`
+  - Удаление: `/usr/local/bin/v2ray-remove-client.sh <name>`
+- **Пути:**
+  - Конфиги: `/usr/local/etc/xray/clients/<name>.txt` (VLESS ссылка)
+  - UUID: `/usr/local/etc/xray/clients/<name>.uuid`
+  - Ключи: `/usr/local/etc/xray/private.key`, `/usr/local/etc/xray/public.key`
+  - Основной конфиг: `/usr/local/etc/xray/config.json`
+- **Клиенты:**
+  - Android: V2RayNG
+  - iOS: Streisand, V2Box
+  - Windows: V2RayN
+  - Mac: V2RayU
+- **Особенности:**
+  - Reality маскирует трафик под HTTPS к google.com
+  - Практически невозможно заблокировать
+  - Конфиг — это VLESS ссылка (не файл)
+
+### Установка протоколов на сервер
+
+**Через деплой-бот** (рекомендуется):
+1. Открыть деплой-бот → Управление серверами → Выбрать сервер
+2. Нажать "🛡️ Установить AmneziaWG" или "🚀 Установить Xray"
+
+**Вручную:**
+```bash
+# AmneziaWG
+bash /path/to/scripts/server/setup_amneziawg.sh
+
+# Xray
+bash /path/to/scripts/server/setup_xray.sh
+```
 
 ### Формат имени конфига
-`<username><device>` — например: `agdeleshaiphone`, `user123macbook`
+`<protocol>_<username>_<device>` — например:
+- `wg_agdelesha_iphone`
+- `awg_agdelesha_macbook`
+- `v2ray_agdelesha_windows`
+
+### Выбор протокола в боте
+При нажатии "Хочу ещё конфиг" пользователь выбирает:
+1. 🔒 WireGuard — стандартный
+2. 🛡 AmneziaWG — защищённый
+3. 🚀 V2Ray/VLESS — максимальная защита
+
+### Поле protocol_type в БД
+Таблица `configs` содержит поле `protocol_type`:
+- `wg` — WireGuard
+- `awg` — AmneziaWG  
+- `v2ray` — V2Ray/Xray
+
+### Проверка доступности протоколов
+```python
+# В wireguard_multi.py
+await WireGuardMultiService.check_awg_available(server)  # True/False
+await WireGuardMultiService.check_v2ray_available(server)  # True/False
+```
 
 ---
 

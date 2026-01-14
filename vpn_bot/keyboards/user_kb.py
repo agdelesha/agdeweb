@@ -2,7 +2,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import TARIFFS, ADMIN_ID
 
 
-def get_main_menu_kb(user_id: int = None, has_subscription: bool = False, how_to_seen: bool = False) -> InlineKeyboardMarkup:
+def get_main_menu_kb(user_id: int = None, has_subscription: bool = False) -> InlineKeyboardMarkup:
     buttons = []
     
     if not has_subscription:
@@ -14,9 +14,6 @@ def get_main_menu_kb(user_id: int = None, has_subscription: bool = False, how_to
     ])
     
     buttons.append([InlineKeyboardButton(text="👥 Реферальная программа", callback_data="referral_menu")])
-    
-    if not how_to_seen:
-        buttons.append([InlineKeyboardButton(text="❓ а как?", callback_data="how_to")])
     
     if user_id == ADMIN_ID:
         buttons.append([InlineKeyboardButton(text="🔧 Админ", callback_data="admin_menu")])
@@ -158,8 +155,7 @@ def get_trial_activated_kb() -> InlineKeyboardMarkup:
 def get_after_config_kb() -> InlineKeyboardMarkup:
     """Клавиатура после получения конфига (для пробного периода)"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Купить подписку", callback_data="funnel_tariffs")],
-        [InlineKeyboardButton(text="❓ а как?", callback_data="how_to")]
+        [InlineKeyboardButton(text="💳 Купить подписку", callback_data="funnel_tariffs")]
     ])
 
 
@@ -193,3 +189,16 @@ def get_withdrawal_cancel_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Отмена", callback_data="referral_menu")]
     ])
+
+
+def get_protocol_choice_kb(has_wg: bool = True, has_awg: bool = True, has_v2ray: bool = False) -> InlineKeyboardMarkup:
+    """Клавиатура выбора протокола VPN"""
+    buttons = []
+    if has_wg:
+        buttons.append([InlineKeyboardButton(text="🔒 WireGuard", callback_data="protocol_wg")])
+    if has_awg:
+        buttons.append([InlineKeyboardButton(text="🛡 AmneziaWG (защищённый)", callback_data="protocol_awg")])
+    if has_v2ray:
+        buttons.append([InlineKeyboardButton(text="🚀 V2Ray/VLESS (максимальная защита)", callback_data="protocol_v2ray")])
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_device_input")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
