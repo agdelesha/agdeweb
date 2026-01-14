@@ -215,6 +215,8 @@ def get_server_info_kb(ip: str, has_code: bool = False) -> InlineKeyboardMarkup:
         buttons.append([InlineKeyboardButton(text="🛑 Остановить бота", callback_data=f"stop_bot_{ip}")])
         buttons.append([InlineKeyboardButton(text="▶️ Запустить бота", callback_data=f"start_bot_{ip}")])
     
+    buttons.append([InlineKeyboardButton(text="🛡️ Установить AmneziaWG", callback_data=f"install_awg_{ip}")])
+    buttons.append([InlineKeyboardButton(text="🚀 Установить Xray (V2Ray)", callback_data=f"install_xray_{ip}")])
     buttons.append([InlineKeyboardButton(text="⭐ Сделать основным", callback_data=f"set_main_{ip}")])
     buttons.append([InlineKeyboardButton(text="🗑 Удалить сервер", callback_data=f"delete_server_{ip}")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="servers_list")])
@@ -1956,3 +1958,221 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+# ============ Установка AmneziaWG ============
+
+@dp.callback_query(F.data.startswith("install_awg_"))
+async def install_awg(callback: CallbackQuery):
+    """Установить AmneziaWG на сервер"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    ip = callback.data.replace("install_awg_", "")
+    server = get_server_by_ip(ip)
+    
+    if not server:
+        await callback.answer("Сервер не найден", show_alert=True)
+        return
+    
+    await callback.answer()
+    await callback.message.edit_text(
+        f"🛡️ *Установка AmneziaWG на {server['name']}*\n\n"
+        f"⏳ Это может занять несколько минут...\n"
+        f"Будет установлен защищённый VPN с обфускацией.",
+        parse_mode="Markdown"
+    )
+    
+    try:
+        password = server.get("password")
+        if password:
+            async with asyncssh.connect(
+                ip, 
+                username="root", 
+                password=password,
+                known_hosts=None,
+                connect_timeout=30
+            ) as conn:
+                # Копируем и запускаем скрипт установки
+                result = await conn.run("bash /root/setup_amneziawg_server.sh 51820", timeout=300)
+                
+                if result.exit_status == 0:
+                    await callback.message.edit_text(
+                        f"✅ *AmneziaWG установлен на {server['name']}!*\n\n"
+                        f"🛡️ Порт: 51820\n"
+                        f"📁 Конфиг: /etc/amnezia/amneziawg/awg0.conf\n\n"
+                        f"⚠️ Клиентам нужно приложение AmneziaVPN:\n"
+                        f"https://amnezia.org/ru/downloads",
+                        parse_mode="Markdown",
+                        reply_markup=get_server_info_kb(ip, has_code=server.get("has_bot_code", False))
+                    )
+                else:
+                    error_msg = result.stderr[:500] if result.stderr else "Неизвестная ошибка"
+                    await callback.message.edit_text(
+                        f"❌ *Ошибка установки AmneziaWG*\n\n"
+                        f"{error_msg}",
+                        parse_mode="Markdown",
+                        reply_markup=get_server_info_kb(ip, has_code=server.get("has_bot_code", False))
+                    )
+        else:
+            await callback.message.edit_text(
+                f"❌ Нет пароля для сервера {server['name']}",
+                reply_markup=get_server_info_kb(ip, has_code=server.get("has_bot_code", False))
+            )
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ *Ошибка подключения*\n\n{str(e)[:200]}",
+            parse_mode="Markdown",
+            reply_markup=get_server_info_kb(ip, has_code=server.get("has_bot_code", False))
+        )
+
+
+@dp.callback_query(F.data.startswith("install_xray_"))
+async def install_xray(callback: CallbackQuery):
+    """Установить Xray (V2Ray) на сервер"""
+    await callback.answer()
+    
+    ip = callback.data.replace("install_xray_", "")
+    server = get_server_by_ip(ip)
+    
+    if not server:
+        await callback.message.edit_text("❌ Сервер не найден")
+        return
+    
+    await callback.message.edit_text(
+        f"🚀 *Установка Xray на {server['name']}*\n\n"
+        f"⏳ Это займёт несколько минут...",
+        parse_mode="Markdown"
+    )
+    
+    try:
+        async with asyncssh.connect(
+            ip,
+            username='root',
+            password=server['password'],
+            known_hosts=None
+        ) as conn:
+            # Скрипт установки Xray
+            install_script = '''
+apt-get update
+apt-get install -y curl unzip jq qrencode
+
+# Установка Xray
+curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh -o /tmp/install-xray.sh
+bash /tmp/install-xray.sh install
+
+# Создаём директории
+mkdir -p /usr/local/etc/xray/clients
+
+# Генерируем ключи Reality
+KEYS=$(/usr/local/bin/xray x25519)
+PRIVATE_KEY=$(echo "$KEYS" | grep 'Private' | awk '{print $2}')
+PUBLIC_KEY=$(echo "$KEYS" | grep 'Public' | awk '{print $2}')
+
+echo "$PRIVATE_KEY" > /usr/local/etc/xray/private.key
+echo "$PUBLIC_KEY" > /usr/local/etc/xray/public.key
+
+SERVER_IP=$(curl -s ifconfig.me)
+SHORT_ID=$(openssl rand -hex 4)
+
+# Создаём конфиг
+cat > /usr/local/etc/xray/config.json << XRAYCONF
+{
+  "log": {"loglevel": "warning"},
+  "inbounds": [{
+    "port": 8443,
+    "protocol": "vless",
+    "settings": {"clients": [], "decryption": "none"},
+    "streamSettings": {
+      "network": "tcp",
+      "security": "reality",
+      "realitySettings": {
+        "show": false,
+        "dest": "www.google.com:443",
+        "serverNames": ["www.google.com"],
+        "privateKey": "$PRIVATE_KEY",
+        "shortIds": ["$SHORT_ID"]
+      }
+    }
+  }],
+  "outbounds": [{"protocol": "freedom"}]
+}
+XRAYCONF
+
+# Скрипт создания клиента
+cat > /usr/local/bin/v2ray-new-conf.sh << 'CLIENTSCRIPT'
+#!/bin/bash
+set -e
+XRAY_CONFIG="/usr/local/etc/xray/config.json"
+CLIENT_DIR="/usr/local/etc/xray/clients"
+SERVER_IP=$(curl -s ifconfig.me)
+PUBLIC_KEY=$(cat /usr/local/etc/xray/public.key)
+SHORT_ID=$(jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' $XRAY_CONFIG)
+
+USERNAME="$1"
+[ -z "$USERNAME" ] && exit 1
+mkdir -p "$CLIENT_DIR"
+
+CLIENT_UUID=$(cat /proc/sys/kernel/random/uuid)
+jq --arg uuid "$CLIENT_UUID" --arg email "$USERNAME" '.inbounds[0].settings.clients += [{"id": $uuid, "email": $email, "flow": "xtls-rprx-vision"}]' "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp" && mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
+systemctl restart xray
+
+VLESS_LINK="vless://${CLIENT_UUID}@${SERVER_IP}:8443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.google.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${USERNAME}"
+echo "$VLESS_LINK" > "$CLIENT_DIR/${USERNAME}.txt"
+qrencode -o "$CLIENT_DIR/${USERNAME}.png" "$VLESS_LINK" 2>/dev/null || true
+
+echo "OK: $USERNAME created"
+echo "UUID:$CLIENT_UUID"
+echo "VLESS_LINK:$VLESS_LINK"
+CLIENTSCRIPT
+
+# Скрипт удаления клиента
+cat > /usr/local/bin/v2ray-remove-client.sh << 'REMOVESCRIPT'
+#!/bin/bash
+set -e
+XRAY_CONFIG="/usr/local/etc/xray/config.json"
+CLIENT_DIR="/usr/local/etc/xray/clients"
+USERNAME="$1"
+[ -z "$USERNAME" ] && exit 1
+jq --arg email "$USERNAME" '.inbounds[0].settings.clients = [.inbounds[0].settings.clients[] | select(.email != $email)]' "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp" && mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
+systemctl restart xray
+rm -f "$CLIENT_DIR/${USERNAME}.txt" "$CLIENT_DIR/${USERNAME}.png"
+echo "OK: $USERNAME removed"
+REMOVESCRIPT
+
+chmod +x /usr/local/bin/v2ray-new-conf.sh /usr/local/bin/v2ray-remove-client.sh
+systemctl enable xray
+systemctl restart xray
+
+echo "XRAY_INSTALLED"
+echo "PUBLIC_KEY:$PUBLIC_KEY"
+'''
+            result = await conn.run(install_script, timeout=300)
+            
+            if "XRAY_INSTALLED" in result.stdout:
+                public_key = ""
+                for line in result.stdout.split('\n'):
+                    if line.startswith('PUBLIC_KEY:'):
+                        public_key = line.split(':')[1]
+                        break
+                
+                await callback.message.edit_text(
+                    f"✅ *Xray установлен на {server['name']}*\n\n"
+                    f"📍 Порт: 8443\n"
+                    f"🔑 Public Key: `{public_key}`\n\n"
+                    f"Скрипты:\n"
+                    f"• /usr/local/bin/v2ray-new-conf.sh\n"
+                    f"• /usr/local/bin/v2ray-remove-client.sh",
+                    parse_mode="Markdown",
+                    reply_markup=get_server_info_kb(ip, True)
+                )
+            else:
+                await callback.message.edit_text(
+                    f"❌ Ошибка установки Xray\n\n{result.stderr[:500]}",
+                    reply_markup=get_server_info_kb(ip, True)
+                )
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка: {str(e)}",
+            reply_markup=get_server_info_kb(ip, True)
+        )

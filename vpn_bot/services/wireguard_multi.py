@@ -96,6 +96,54 @@ class WireGuardMultiService:
         return result.scalar() or 0
     
     @classmethod
+    async def get_best_server_for_protocol(cls, session: AsyncSession, protocol: str) -> Optional[Server]:
+        """
+        Выбрать лучший сервер с поддержкой указанного протокола.
+        Учитывает заполненность и приоритет серверов.
+        
+        protocol: "wg", "awg", "v2ray"
+        """
+        # Получаем все активные серверы с подсчётом клиентов
+        stmt = (
+            select(
+                Server,
+                func.count(Config.id).label("client_count"),
+                (func.count(Config.id) * 100.0 / Server.max_clients).label("fill_percent")
+            )
+            .outerjoin(Config, (Config.server_id == Server.id) & (Config.is_active == True))
+            .where(Server.is_active == True)
+            .group_by(Server.id)
+            .having(func.count(Config.id) < Server.max_clients)
+            .order_by(
+                Server.priority.desc(),
+                (func.count(Config.id) * 100.0 / Server.max_clients).asc()
+            )
+        )
+        
+        result = await session.execute(stmt)
+        rows = result.all()
+        
+        # Проверяем каждый сервер на поддержку протокола
+        for row in rows:
+            server = row[0]
+            client_count = row[1]
+            fill_percent = row[2] if row[2] else 0
+            
+            if protocol == "v2ray":
+                if await cls.check_v2ray_available(server):
+                    logger.info(f"Выбран сервер {server.name} для V2Ray: {client_count}/{server.max_clients} ({fill_percent:.1f}%)")
+                    return server
+            elif protocol == "awg":
+                if await cls.check_awg_available(server):
+                    logger.info(f"Выбран сервер {server.name} для AWG: {client_count}/{server.max_clients} ({fill_percent:.1f}%)")
+                    return server
+            else:  # wg
+                logger.info(f"Выбран сервер {server.name} для WG: {client_count}/{server.max_clients} ({fill_percent:.1f}%)")
+                return server
+        
+        return None
+    
+    @classmethod
     async def _ssh_connect(cls, server: Server) -> asyncssh.SSHClientConnection:
         """Создать SSH соединение к серверу"""
         return await asyncssh.connect(
@@ -233,12 +281,44 @@ class WireGuardMultiService:
         ), f"Конфиг создан на сервере {server.name}"
     
     @classmethod
-    async def fetch_config_content(cls, config_name: str, server: Server) -> Optional[str]:
+    async def fetch_config_content(cls, config_name: str, server: Server, protocol_type: str = "wg") -> Optional[str]:
         """Получить содержимое конфига с удалённого сервера"""
         if LOCAL_MODE:
             return None
         
-        config_path = f"{server.client_dir}/{config_name}.conf"
+        # Определяем путь в зависимости от протокола
+        if protocol_type == "v2ray":
+            # V2Ray хранит конфиг в .json файле, а VLESS ссылку нужно извлечь из него
+            # Сначала пробуем прочитать готовую ссылку из .txt (если скрипт её сохранил)
+            txt_path = f"/usr/local/etc/xray/clients/{config_name}.txt"
+            content = await cls._ssh_read_file(server, txt_path)
+            if content:
+                return content.decode('utf-8').strip()
+            
+            # Если .txt нет, пробуем извлечь из .json
+            json_path = f"/usr/local/etc/xray/clients/{config_name}.json"
+            json_content = await cls._ssh_read_file(server, json_path)
+            if json_content:
+                try:
+                    import json
+                    config_data = json.loads(json_content.decode('utf-8'))
+                    # Извлекаем UUID и строим VLESS ссылку
+                    uuid = config_data.get('id', '')
+                    if uuid:
+                        # Получаем данные сервера из конфига xray
+                        server_ip = server.host
+                        # Формируем базовую VLESS ссылку
+                        vless_link = f"vless://{uuid}@{server_ip}:443?encryption=none&security=reality&type=tcp"
+                        return vless_link
+                except Exception as e:
+                    logger.error(f"Ошибка парсинга V2Ray JSON: {e}")
+            
+            return None
+        elif protocol_type == "awg":
+            config_path = f"/etc/amnezia/amneziawg/clients/{config_name}.conf"
+        else:
+            config_path = f"{server.client_dir}/{config_name}.conf"
+        
         content = await cls._ssh_read_file(server, config_path)
         if content:
             return content.decode('utf-8')
@@ -304,12 +384,19 @@ class WireGuardMultiService:
         return None
     
     @classmethod
-    async def fetch_qr_content(cls, config_name: str, server: Server) -> Optional[bytes]:
+    async def fetch_qr_content(cls, config_name: str, server: Server, protocol_type: str = "wg") -> Optional[bytes]:
         """Получить QR-код конфига с удалённого сервера"""
         if LOCAL_MODE:
             return None
         
-        qr_path = f"{server.client_dir}/{config_name}.png"
+        # Определяем путь в зависимости от протокола
+        if protocol_type == "v2ray":
+            qr_path = f"/usr/local/etc/xray/clients/{config_name}.png"
+        elif protocol_type == "awg":
+            qr_path = f"/etc/amnezia/amneziawg/clients/{config_name}.png"
+        else:
+            qr_path = f"{server.client_dir}/{config_name}.png"
+        
         return await cls._ssh_read_file(server, qr_path)
     
     @classmethod

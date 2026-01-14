@@ -241,25 +241,8 @@ async def create_config_with_protocol(config_name: str, user_id: int, protocol: 
     protocol: "wg", "awg", "v2ray"
     """
     async with async_session() as session:
-        servers = await WireGuardMultiService.get_all_servers(session)
-        
-        if not servers:
-            return False, None, None, "Нет доступных серверов", protocol
-        
-        # Выбираем сервер с поддержкой нужного протокола
-        target_server = None
-        for server in servers:
-            if protocol == "v2ray":
-                if await WireGuardMultiService.check_v2ray_available(server):
-                    target_server = server
-                    break
-            elif protocol == "awg":
-                if await WireGuardMultiService.check_awg_available(server):
-                    target_server = server
-                    break
-            else:  # wg
-                target_server = server
-                break
+        # Используем умный выбор сервера с учётом заполненности и приоритета
+        target_server = await WireGuardMultiService.get_best_server_for_protocol(session, protocol)
         
         if not target_server:
             return False, None, None, f"Нет серверов с поддержкой {protocol}", protocol
@@ -794,21 +777,30 @@ async def how_to_understood(callback: CallbackQuery, bot: Bot):
                 async with async_session() as session:
                     server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
                     if server:
-                        config_content = await WireGuardMultiService.fetch_config_content(config.name, server)
+                        protocol_type = getattr(config, 'protocol_type', 'wg') or 'wg'
+                        config_content = await WireGuardMultiService.fetch_config_content(config.name, server, protocol_type)
                         if config_content:
-                            import tempfile
-                            with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as f:
-                                f.write(config_content)
-                                temp_path = f.name
-                            try:
-                                await bot.send_document(
+                            if protocol_type == "v2ray":
+                                # V2Ray — отправляем ссылку текстом
+                                await bot.send_message(
                                     callback.from_user.id,
-                                    FSInputFile(temp_path, filename=f"{config.name}.conf"),
-                                    caption="📄 Вот твой конфиг",
-                                    parse_mode=None
+                                    f"🚀 *V2Ray конфиг*\n\n📋 Ссылка для импорта:\n`{config_content}`",
+                                    parse_mode="Markdown"
                                 )
-                            finally:
-                                os.unlink(temp_path)
+                            else:
+                                import tempfile
+                                with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as f:
+                                    f.write(config_content)
+                                    temp_path = f.name
+                                try:
+                                    await bot.send_document(
+                                        callback.from_user.id,
+                                        FSInputFile(temp_path, filename=f"{config.name}.conf"),
+                                        caption="📄 Вот твой конфиг",
+                                        parse_mode=None
+                                    )
+                                finally:
+                                    os.unlink(temp_path)
             else:
                 # Локальный сервер
                 config_path = WireGuardService.get_config_file_path(config.name)
@@ -1917,28 +1909,38 @@ async def download_config(callback: CallbackQuery, bot: Bot):
                 await callback.answer("❌ Сервер не найден", show_alert=True)
                 return
             
-            config_content = await WireGuardMultiService.fetch_config_content(config.name, server)
+            protocol_type = getattr(config, 'protocol_type', 'wg') or 'wg'
+            config_content = await WireGuardMultiService.fetch_config_content(config.name, server, protocol_type)
             
-            # Если файл не найден — пробуем пересоздать
-            if not config_content:
+            # Если файл не найден — пробуем пересоздать (только для WG/AWG)
+            if not config_content and protocol_type not in ("v2ray",):
                 await callback.answer("⏳ Пересоздаю конфиг...", show_alert=False)
                 config_content = await WireGuardMultiService.regenerate_config_file(config.name, server)
             
             if config_content:
-                import tempfile
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as f:
-                    f.write(config_content)
-                    temp_path = f.name
-                try:
-                    await bot.send_document(
+                if protocol_type == "v2ray":
+                    # V2Ray — отправляем ссылку текстом
+                    await bot.send_message(
                         callback.from_user.id,
-                        FSInputFile(temp_path, filename=f"{config.name}.conf"),
-                        caption=f"📄 Конфиг: {config.name}",
-                        parse_mode=None
+                        f"🚀 *V2Ray конфиг: {escape_markdown(config.name)}*\n\n📋 Ссылка для импорта:\n`{config_content}`",
+                        parse_mode="Markdown"
                     )
                     await callback.answer("✅ Конфиг отправлен")
-                finally:
-                    os.unlink(temp_path)
+                else:
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as f:
+                        f.write(config_content)
+                        temp_path = f.name
+                    try:
+                        await bot.send_document(
+                            callback.from_user.id,
+                            FSInputFile(temp_path, filename=f"{config.name}.conf"),
+                            caption=f"📄 Конфиг: {config.name}",
+                            parse_mode=None
+                        )
+                        await callback.answer("✅ Конфиг отправлен")
+                    finally:
+                        os.unlink(temp_path)
             else:
                 await callback.answer("❌ Не удалось получить конфиг с сервера", show_alert=True)
         else:
@@ -1983,9 +1985,9 @@ async def show_config(callback: CallbackQuery, bot: Bot):
                 await callback.answer("❌ Сервер не найден", show_alert=True)
                 return
             
-            config_content = await WireGuardMultiService.fetch_config_content(config.name, server)
+            config_content = await WireGuardMultiService.fetch_config_content(config.name, server, protocol_type)
             
-            if not config_content:
+            if not config_content and protocol_type not in ("v2ray",):
                 await callback.answer("⏳ Пересоздаю конфиг...", show_alert=False)
                 config_content = await WireGuardMultiService.regenerate_config_file(config.name, server)
             
@@ -2040,14 +2042,15 @@ async def qr_config(callback: CallbackQuery, bot: Bot):
                 await callback.answer("❌ Сервер не найден", show_alert=True)
                 return
             
-            qr_content = await WireGuardMultiService.fetch_qr_content(config.name, server)
+            protocol_type = getattr(config, 'protocol_type', 'wg') or 'wg'
+            qr_content = await WireGuardMultiService.fetch_qr_content(config.name, server, protocol_type)
             
-            # Если QR не найден — пробуем пересоздать конфиг (QR создастся вместе с ним)
-            if not qr_content:
+            # Если QR не найден — пробуем пересоздать конфиг (QR создастся вместе с ним, только для WG/AWG)
+            if not qr_content and protocol_type not in ("v2ray",):
                 await callback.answer("⏳ Пересоздаю конфиг...", show_alert=False)
                 config_content = await WireGuardMultiService.regenerate_config_file(config.name, server)
                 if config_content:
-                    qr_content = await WireGuardMultiService.fetch_qr_content(config.name, server)
+                    qr_content = await WireGuardMultiService.fetch_qr_content(config.name, server, protocol_type)
             
             if qr_content:
                 import tempfile
