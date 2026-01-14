@@ -342,22 +342,31 @@ class SchedulerService:
                         current_received = stats.get('received', 0)
                         current_sent = stats.get('sent', 0)
                         
-                        # Если текущий трафик больше сохранённого — обновляем
-                        # (трафик может сброситься при перезапуске WG, поэтому берём максимум)
-                        if current_received > 0 or current_sent > 0:
-                            # Если текущий трафик меньше сохранённого — значит WG перезапустился
-                            # В этом случае добавляем текущий к накопленному
-                            if current_received < config.total_received or current_sent < config.total_sent:
-                                # WG перезапустился, добавляем текущий трафик
-                                config.total_received += current_received
-                                config.total_sent += current_sent
-                            else:
-                                # Обычное обновление — берём максимум
-                                config.total_received = max(config.total_received, current_received)
-                                config.total_sent = max(config.total_sent, current_sent)
-                            
-                            config.last_traffic_update = datetime.utcnow()
-                            updated_count += 1
+                        # Пропускаем если нет трафика
+                        if current_received == 0 and current_sent == 0:
+                            continue
+                        
+                        # Получаем сохранённые значения "до перезапуска WG"
+                        last_wg_received = config.last_wg_received or 0
+                        last_wg_sent = config.last_wg_sent or 0
+                        
+                        # Если текущий трафик меньше последнего известного — WG перезапустился
+                        # Сохраняем накопленный трафик и начинаем считать заново
+                        if current_received < last_wg_received or current_sent < last_wg_sent:
+                            # WG перезапустился — добавляем последний известный трафик к total
+                            # и начинаем отсчёт заново с текущих значений
+                            config.total_received = (config.total_received or 0) + last_wg_received
+                            config.total_sent = (config.total_sent or 0) + last_wg_sent
+                            config.last_wg_received = current_received
+                            config.last_wg_sent = current_sent
+                            logger.debug(f"WG restart detected for {config.name}: reset counters")
+                        else:
+                            # Обычное обновление — просто запоминаем текущие значения
+                            config.last_wg_received = current_received
+                            config.last_wg_sent = current_sent
+                        
+                        config.last_traffic_update = datetime.utcnow()
+                        updated_count += 1
                 
                 await session.commit()
                 logger.info(f"Обновлена статистика трафика для {updated_count} конфигов")

@@ -130,10 +130,15 @@ def get_configs_kb(configs: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_config_detail_kb(config_id: int, is_active: bool, server_deleted: bool = False) -> InlineKeyboardMarkup:
+def get_config_detail_kb(config_id: int, is_active: bool, server_deleted: bool = False, protocol_type: str = "wg") -> InlineKeyboardMarkup:
     buttons = []
     if not server_deleted:
-        buttons.append([InlineKeyboardButton(text="📥 Скачать конфиг", callback_data=f"download_config_{config_id}")])
+        if protocol_type in ("awg", "v2ray"):
+            # Для AWG и V2Ray показываем конфиг текстом
+            buttons.append([InlineKeyboardButton(text="📋 Показать конфиг", callback_data=f"show_config_{config_id}")])
+        else:
+            # Для обычного WG скачиваем файл
+            buttons.append([InlineKeyboardButton(text="📥 Скачать конфиг", callback_data=f"download_config_{config_id}")])
         buttons.append([InlineKeyboardButton(text="📷 QR-код", callback_data=f"qr_config_{config_id}")])
     buttons.append([InlineKeyboardButton(text="🗑 Удалить конфиг", callback_data=f"user_delete_config_{config_id}")])
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="my_configs")])

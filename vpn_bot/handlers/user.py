@@ -1050,8 +1050,19 @@ async def funnel_protocol_selected(callback: CallbackQuery, bot: Bot):
             parse_mode="Markdown",
             reply_markup=get_after_config_kb()
         )
+    elif protocol == "awg":
+        # Для AWG отправляем текст конфига
+        config_content = config_data.config_content if hasattr(config_data, 'config_content') else ""
+        await bot.send_message(
+            callback.from_user.id,
+            f"🛡 *Твой AmneziaWG конфиг:*\n\n"
+            f"```\n{config_content}\n```\n\n"
+            "Скопируй и импортируй в AmneziaVPN.",
+            parse_mode="Markdown",
+            reply_markup=get_after_config_kb()
+        )
     else:
-        # Для WG/AWG отправляем файл
+        # Для обычного WG отправляем файл
         await send_config_file(
             bot, callback.from_user.id, config_name, config_data, server_id,
             caption="📄 Твой конфиг",
@@ -1866,6 +1877,8 @@ async def config_detail(callback: CallbackQuery):
         if server_deleted:
             server_warning = "\n\n⚠️ *Этот конфиг больше не работает.*\nСервер бессрочно выбыл из работы.\nЗапроси новый конфиг."
         
+        protocol_type = getattr(config, 'protocol_type', 'wg') or 'wg'
+        
         await callback.message.edit_text(
             f"📱 *Конфиг: {escape_markdown(config.name)}*\n\n"
             f"Статус: {status}\n"
@@ -1875,7 +1888,7 @@ async def config_detail(callback: CallbackQuery):
             f"{traffic_text}"
             f"{server_warning}",
             parse_mode="Markdown",
-            reply_markup=get_config_detail_kb(config.id, config.is_active, server_deleted)
+            reply_markup=get_config_detail_kb(config.id, config.is_active, server_deleted, protocol_type)
         )
 
 
@@ -1942,6 +1955,64 @@ async def download_config(callback: CallbackQuery, bot: Bot):
                 await callback.answer("✅ Конфиг отправлен")
             else:
                 await callback.answer("❌ Файл конфига не найден", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("show_config_"))
+async def show_config(callback: CallbackQuery, bot: Bot):
+    """Показать конфиг AWG или V2Ray текстом в сообщении"""
+    config_id = int(callback.data.replace("show_config_", ""))
+    
+    async with async_session() as session:
+        stmt = select(Config).where(Config.id == config_id).options(selectinload(Config.user))
+        result = await session.execute(stmt)
+        config = result.scalar_one_or_none()
+        
+        if not config or config.user.telegram_id != callback.from_user.id:
+            await callback.answer("Конфиг не найден", show_alert=True)
+            return
+        
+        if LOCAL_MODE:
+            await callback.answer("В локальном режиме файлы недоступны", show_alert=True)
+            return
+        
+        protocol_type = getattr(config, 'protocol_type', 'wg') or 'wg'
+        
+        if config.server_id:
+            server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+            if not server:
+                await callback.answer("❌ Сервер не найден", show_alert=True)
+                return
+            
+            config_content = await WireGuardMultiService.fetch_config_content(config.name, server)
+            
+            if not config_content:
+                await callback.answer("⏳ Пересоздаю конфиг...", show_alert=False)
+                config_content = await WireGuardMultiService.regenerate_config_file(config.name, server)
+            
+            if config_content:
+                if protocol_type == "v2ray":
+                    # V2Ray — отправляем ссылку
+                    await bot.send_message(
+                        callback.from_user.id,
+                        f"🚀 *V2Ray конфиг: {escape_markdown(config.name)}*\n\n"
+                        f"📋 Ссылка для импорта:\n`{config_content}`\n\n"
+                        f"Скопируй и добавь в приложение.",
+                        parse_mode="Markdown"
+                    )
+                else:
+                    # AWG — отправляем содержимое конфига
+                    await bot.send_message(
+                        callback.from_user.id,
+                        f"🛡 *AmneziaWG конфиг: {escape_markdown(config.name)}*\n\n"
+                        f"```\n{config_content}\n```\n\n"
+                        f"Скопируй и импортируй в AmneziaVPN.",
+                        parse_mode="Markdown"
+                    )
+                await callback.answer("✅ Конфиг отправлен")
+            else:
+                await callback.answer("❌ Не удалось получить конфиг с сервера", show_alert=True)
+        else:
+            await callback.answer("❌ Конфиг не найден на сервере", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("qr_config_"))
@@ -2202,6 +2273,12 @@ async def request_extra_config(callback: CallbackQuery, state: FSMContext, bot: 
             )
             return
     
+    # Показываем индикатор загрузки
+    await callback.message.edit_text(
+        "⏳ *Загрузка...*\n\nПроверяю доступные протоколы",
+        parse_mode="Markdown"
+    )
+    
     # Проверяем доступные протоколы на серверах
     from keyboards.user_kb import get_protocol_choice_kb
     from services.wireguard_multi import WireGuardMultiService
@@ -2251,6 +2328,13 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
     # Получаем выбранный протокол из состояния
     state_data = await state.get_data()
     selected_protocol = state_data.get("selected_protocol", "awg")  # по умолчанию awg
+    
+    # Удаляем сообщение с кнопкой "Отмена" (предыдущее сообщение бота)
+    try:
+        # Пробуем удалить сообщение перед сообщением пользователя
+        await bot.delete_message(message.chat.id, message.message_id - 1)
+    except Exception:
+        pass
     
     async with async_session() as session:
         stmt = select(User).where(
@@ -2347,8 +2431,7 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
         
         # Отправляем конфиг пользователю
         if protocol_type == "v2ray":
-            caption = f"📄 Твой V2Ray конфиг для {device_name}\n\n⚠️ *Требуется приложение V2RayNG или Streisand*\n📱 Android: V2RayNG\n📱 iOS: Streisand или V2Box"
-            # Для V2Ray отправляем ссылку как текст
+            # Для V2Ray отправляем ссылку как текст (с клавиатурой сразу)
             await message.answer(
                 f"🚀 *V2Ray/VLESS конфиг создан!*\n\n"
                 f"📱 Устройство: {device_name}\n\n"
@@ -2362,22 +2445,27 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
                 reply_markup=get_main_menu_kb(message.from_user.id, True)
             )
         elif protocol_type == "awg":
-            caption = f"📄 Твой защищённый конфиг для {device_name}\n\n⚠️ *Требуется приложение AmneziaVPN*\nСкачай: https://amnezia.org/ru/downloads"
-            await send_config_file(
-                bot, message.from_user.id, config_name, config_data, server_id,
-                caption=caption
+            # Для AWG отправляем текст конфига
+            await message.answer(
+                f"🛡 *AmneziaWG конфиг создан!*\n\n"
+                f"📱 Устройство: {device_name}\n\n"
+                f"```\n{config_data.config_content}\n```\n\n"
+                f"⚠️ Скопируй и импортируй в AmneziaVPN\n"
+                f"Скачать: https://amnezia.org/ru/downloads",
+                parse_mode="Markdown",
+                reply_markup=get_main_menu_kb(message.from_user.id, True)
             )
         else:
+            # Для обычного WG отправляем файл
             caption = f"📄 Твой WireGuard конфиг для {device_name}\n\n📷 QR-код можно найти в меню «Конфиги»"
             await send_config_file(
                 bot, message.from_user.id, config_name, config_data, server_id,
                 caption=caption
             )
-        
-        await message.answer(
-            "✅ Конфиг создан!",
-            reply_markup=get_main_menu_kb(message.from_user.id, True)
-        )
+            await message.answer(
+                "✅ Конфиг создан!",
+                reply_markup=get_main_menu_kb(message.from_user.id, True)
+            )
 
 
 @router.callback_query(F.data == "cancel_device_input")

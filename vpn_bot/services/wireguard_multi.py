@@ -1043,6 +1043,23 @@ echo "OK: $USERNAME removed"
         
         logger.info(f"Удаление AWG конфига {username} с сервера {server.name}")
         
+        # Проверяем наличие скрипта
+        script_check, _, _ = await cls._ssh_execute(server, "test -f /usr/local/bin/awg-remove-client.sh && echo 'OK'")
+        if not script_check:
+            # Скрипт не найден — удаляем файлы вручную
+            logger.warning(f"Скрипт awg-remove-client.sh не найден на {server.name}, удаляем файлы вручную")
+            
+            # Удаляем пир из WG если есть public_key
+            if public_key:
+                await cls._ssh_execute(server, f"wg set awg0 peer {public_key} remove 2>/dev/null || true")
+            
+            # Удаляем файлы конфига
+            await cls._ssh_execute(server, f"rm -f /etc/wireguard/clients/{username}.conf /etc/wireguard/clients/{username}.png 2>/dev/null || true")
+            await cls._ssh_execute(server, f"wg-quick save awg0 2>/dev/null || true")
+            
+            logger.info(f"AWG конфиг {username} удалён вручную с сервера {server.name}")
+            return True, f"AWG конфиг удален с сервера {server.name}"
+        
         # Удаляем через скрипт
         success, stdout, stderr = await cls._ssh_execute(
             server,
@@ -1053,8 +1070,14 @@ echo "OK: $USERNAME removed"
             logger.info(f"AWG конфиг {username} успешно удалён с сервера {server.name}")
             return True, f"AWG конфиг удален с сервера {server.name}"
         
-        logger.error(f"Ошибка удаления AWG конфига {username} с {server.name}: {stderr}")
-        return False, stderr or "Ошибка удаления"
+        # Если скрипт вернул ошибку — пробуем удалить вручную
+        logger.warning(f"Скрипт вернул ошибку, удаляем вручную: {stderr}")
+        if public_key:
+            await cls._ssh_execute(server, f"wg set awg0 peer {public_key} remove 2>/dev/null || true")
+        await cls._ssh_execute(server, f"rm -f /etc/wireguard/clients/{username}.conf /etc/wireguard/clients/{username}.png 2>/dev/null || true")
+        await cls._ssh_execute(server, f"wg-quick save awg0 2>/dev/null || true")
+        
+        return True, f"AWG конфиг удален с сервера {server.name}"
     
     @classmethod
     async def check_v2ray_available(cls, server: Server) -> bool:
@@ -1125,6 +1148,18 @@ echo "OK: $USERNAME removed"
         
         logger.info(f"Удаление V2Ray конфига {username} с сервера {server.name}")
         
+        # Проверяем наличие скрипта
+        script_check, _, _ = await cls._ssh_execute(server, "test -f /usr/local/bin/v2ray-remove-client.sh && echo 'OK'")
+        if not script_check:
+            # Скрипт не найден — удаляем файлы вручную
+            logger.warning(f"Скрипт v2ray-remove-client.sh не найден на {server.name}, удаляем файлы вручную")
+            
+            # Удаляем файлы конфига
+            await cls._ssh_execute(server, f"rm -f /usr/local/etc/xray/clients/{username}.json /usr/local/etc/xray/clients/{username}.png 2>/dev/null || true")
+            
+            logger.info(f"V2Ray конфиг {username} удалён вручную с сервера {server.name}")
+            return True, f"V2Ray конфиг удален с сервера {server.name}"
+        
         # Удаляем через скрипт
         success, stdout, stderr = await cls._ssh_execute(
             server,
@@ -1135,5 +1170,8 @@ echo "OK: $USERNAME removed"
             logger.info(f"V2Ray конфиг {username} успешно удалён с сервера {server.name}")
             return True, f"V2Ray конфиг удален с сервера {server.name}"
         
-        logger.error(f"Ошибка удаления V2Ray конфига {username} с {server.name}: {stderr}")
-        return False, stderr or "Ошибка удаления"
+        # Если скрипт вернул ошибку — пробуем удалить вручную
+        logger.warning(f"Скрипт вернул ошибку, удаляем вручную: {stderr}")
+        await cls._ssh_execute(server, f"rm -f /usr/local/etc/xray/clients/{username}.json /usr/local/etc/xray/clients/{username}.png 2>/dev/null || true")
+        
+        return True, f"V2Ray конфиг удален с сервера {server.name}"

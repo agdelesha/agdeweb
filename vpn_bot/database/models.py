@@ -93,6 +93,9 @@ class Config(Base):
     total_received: Mapped[int] = mapped_column(BigInteger, default=0)  # входящий трафик в байтах
     total_sent: Mapped[int] = mapped_column(BigInteger, default=0)  # исходящий трафик в байтах
     last_traffic_update: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # когда последний раз обновляли
+    # Последние значения с WG (для отслеживания перезапусков)
+    last_wg_received: Mapped[int] = mapped_column(BigInteger, default=0)  # последнее значение received с WG
+    last_wg_sent: Mapped[int] = mapped_column(BigInteger, default=0)  # последнее значение sent с WG
 
     user: Mapped["User"] = relationship("User", back_populates="configs")
     server: Mapped[Optional["Server"]] = relationship("Server", back_populates="configs")
