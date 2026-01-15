@@ -1775,6 +1775,120 @@ async def admin_delete_and_block(callback: CallbackQuery):
             pass
 
 
+@router.callback_query(F.data.startswith("admin_full_delete_"))
+async def admin_full_delete_user(callback: CallbackQuery):
+    """Полное удаление пользователя из БД (для тестирования)"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    await callback.answer()
+    user_id = int(callback.data.replace("admin_full_delete_", ""))
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.id == user_id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+    
+    if not user:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+    
+    username = f"@{user.username}" if user.username else user.full_name
+    
+    await callback.message.edit_text(
+        f"⚠️ ПОЛНОЕ УДАЛЕНИЕ (для тестов)\n\n"
+        f"Пользователь: {username}\n"
+        f"ID: {user.telegram_id}\n\n"
+        f"Будут ПОЛНОСТЬЮ удалены:\n"
+        f"• Профиль пользователя\n"
+        f"• Все конфиги (с серверов и из БД)\n"
+        f"• Все подписки\n"
+        f"• Все платежи\n"
+        f"• Статус пробного периода\n\n"
+        f"⚠️ Пользователь сможет заново получить пробный период!",
+        parse_mode=None,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🗑 Да, удалить полностью", callback_data=f"admin_confirm_full_delete_{user_id}"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data=f"admin_user_{user_id}"),
+            ],
+        ])
+    )
+
+
+@router.callback_query(F.data.startswith("admin_confirm_full_delete_"))
+async def admin_confirm_full_delete(callback: CallbackQuery):
+    """Подтверждение полного удаления пользователя"""
+    if not is_admin(callback.from_user.id):
+        return
+    
+    user_id = int(callback.data.replace("admin_confirm_full_delete_", ""))
+    
+    async with async_session() as session:
+        stmt = select(User).where(User.id == user_id).options(selectinload(User.configs))
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        
+        username = f"@{user.username}" if user.username else user.full_name
+        
+        # Удаляем записи из очереди конфигов
+        from database.models import ConfigQueue, Subscription, Payment
+        queue_stmt = select(ConfigQueue).where(ConfigQueue.user_id == user_id)
+        queue_result = await session.execute(queue_stmt)
+        for queue_item in queue_result.scalars().all():
+            await session.delete(queue_item)
+        
+        # Удаляем конфиги с серверов
+        for config in user.configs:
+            try:
+                if config.server_id:
+                    server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
+                    if server:
+                        await WireGuardMultiService.delete_config(config.name, server, config.public_key)
+                else:
+                    await WireGuardService.delete_config(config.name)
+            except Exception as e:
+                logger.error(f"Ошибка удаления конфига {config.name}: {e}")
+        
+        # Удаляем конфиги из БД
+        for config in user.configs:
+            await session.delete(config)
+        
+        # Удаляем подписки
+        sub_stmt = select(Subscription).where(Subscription.user_id == user.id)
+        sub_result = await session.execute(sub_stmt)
+        for sub in sub_result.scalars().all():
+            await session.delete(sub)
+        
+        # Удаляем платежи
+        pay_stmt = select(Payment).where(Payment.user_id == user.id)
+        pay_result = await session.execute(pay_stmt)
+        for pay in pay_result.scalars().all():
+            await session.delete(pay)
+        
+        # Удаляем самого пользователя
+        await session.delete(user)
+        await session.commit()
+        
+        await callback.answer("🗑 Пользователь полностью удалён")
+        
+        # Возвращаемся к списку пользователей
+        stmt = select(User).where(User.is_blocked == False, User.is_banned == False).order_by(User.created_at.desc())
+        result = await session.execute(stmt)
+        users = result.scalars().all()
+        
+        await callback.message.edit_text(
+            f"👥 *Пользователи ({len(users)}):*\n\n"
+            f"✅ Пользователь {username} полностью удалён",
+            parse_mode="Markdown",
+            reply_markup=get_users_list_kb(users)
+        )
+
+
 @router.callback_query(F.data == "admin_blocked_users")
 async def admin_blocked_users(callback: CallbackQuery):
     """Список заблокированных админом пользователей (is_banned)"""
@@ -3346,9 +3460,21 @@ async def admin_server_detail(callback: CallbackQuery):
             return
         
         client_count = await WireGuardMultiService.get_server_client_count(session, server_id)
+        
+        # Проверяем доступные протоколы
+        has_awg = await WireGuardMultiService.check_awg_available(server)
+        has_v2ray = await WireGuardMultiService.check_v2ray_available(server)
     
     status = "🟢 Активен" if server.is_active else "🔴 Отключен"
     has_clients = client_count > 0
+    
+    # Формируем список протоколов
+    protocols = ["WG"]
+    if has_awg:
+        protocols.append("AWG")
+    if has_v2ray:
+        protocols.append("V2Ray")
+    protocols_str = ", ".join(protocols)
     
     text = (
         f"🖥 *{server.name}*\n\n"
@@ -3359,6 +3485,7 @@ async def admin_server_detail(callback: CallbackQuery):
         f"*Клиентов:* {client_count}/{server.max_clients}\n"
         f"*Приоритет:* {server.priority}\n"
         f"*Интерфейс:* {server.wg_interface}\n"
+        f"*Протоколы:* {protocols_str}\n"
         f"*Создан:* {format_date_moscow(server.created_at)}"
     )
     

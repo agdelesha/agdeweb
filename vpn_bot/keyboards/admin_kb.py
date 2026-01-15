@@ -57,6 +57,7 @@ def get_user_detail_kb(user_id: int, max_configs: int = None) -> InlineKeyboardM
         [InlineKeyboardButton(text="🎁 Подарить", callback_data=f"admin_gift_menu_{user_id}")],
         [InlineKeyboardButton(text=max_text, callback_data=f"admin_user_max_configs_{user_id}")],
         [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data=f"admin_delete_user_{user_id}")],
+        [InlineKeyboardButton(text="🧪 Полное удаление (тест)", callback_data=f"admin_full_delete_{user_id}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_users")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
