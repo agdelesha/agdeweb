@@ -955,20 +955,33 @@ async def funnel_protocol_selected(callback: CallbackQuery, bot: Bot):
     
     # Создаём конфиг с выбранным протоколом
     username = callback.from_user.username or f"user{callback.from_user.id}"
-    config_name = f"{protocol}_{username}"
+    base_config_name = f"{protocol}_{username}"
     
-    # Получаем user_id из БД
+    # Получаем user_id из БД и проверяем уникальность имени конфига
     db_user_id = None
+    config_name = base_config_name
     async with async_session() as session:
         stmt = select(User).where(User.telegram_id == callback.from_user.id)
         result = await session.execute(stmt)
         db_user = result.scalar_one_or_none()
         if db_user:
             db_user_id = db_user.id
+        
+        # Проверяем существует ли конфиг с таким именем
+        existing = await session.execute(select(Config).where(Config.name == config_name))
+        if existing.scalar_one_or_none():
+            # Добавляем суффикс для уникальности
+            suffix = 1
+            while True:
+                config_name = f"{base_config_name}_{suffix}"
+                check = await session.execute(select(Config).where(Config.name == config_name))
+                if not check.scalar_one_or_none():
+                    break
+                suffix += 1
     
     # Создаём конфиг с нужным протоколом
-    success, config_data, server_id, error_msg = await create_config_with_protocol(
-        config_name, db_user_id, protocol, bot, callback.from_user.id, callback.from_user.username
+    success, config_data, server_id, error_msg, protocol_type = await create_config_with_protocol(
+        config_name, db_user_id, protocol
     )
     
     if not success:
@@ -2390,7 +2403,20 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
         base_name = username or f"user{telegram_id}"
         device_translit = transliterate_ru_to_en(device_name)
         clean_device = re.sub(r'[^\w]', '', device_translit)[:12]
-        config_name = f"{selected_protocol}_{base_name}_{clean_device}"
+        base_config_name = f"{selected_protocol}_{base_name}_{clean_device}"
+        
+        # Проверяем уникальность имени конфига
+        config_name = base_config_name
+        async with async_session() as session:
+            existing = await session.execute(select(Config).where(Config.name == config_name))
+            if existing.scalar_one_or_none():
+                suffix = 1
+                while True:
+                    config_name = f"{base_config_name}_{suffix}"
+                    check = await session.execute(select(Config).where(Config.name == config_name))
+                    if not check.scalar_one_or_none():
+                        break
+                    suffix += 1
         
         # Отправляем сообщение "подождите"
         wait_msg = await message.answer(
@@ -2399,7 +2425,7 @@ async def process_device_request(message: Message, state: FSMContext, bot: Bot):
         
         # Создаём конфиг в зависимости от выбранного протокола
         success, config_data, server_id, msg, protocol_type = await create_config_with_protocol(
-            config_name, telegram_id, selected_protocol
+            config_name, user_id, selected_protocol
         )
         
         # Удаляем сообщение "подождите"
