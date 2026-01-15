@@ -2041,7 +2041,13 @@ async def install_xray(callback: CallbackQuery):
     
     await callback.message.edit_text(
         f"🚀 *Установка Xray на {server['name']}*\n\n"
-        f"⏳ Это займёт несколько минут...",
+        f"⏳ Это займёт 2-5 минут...\n\n"
+        f"📋 Этапы:\n"
+        f"1. Установка зависимостей\n"
+        f"2. Скачивание Xray\n"
+        f"3. Генерация ключей\n"
+        f"4. Создание конфига\n"
+        f"5. Запуск сервиса",
         parse_mode="Markdown"
     )
     
@@ -2064,10 +2070,10 @@ bash /tmp/install-xray.sh install
 # Создаём директории
 mkdir -p /usr/local/etc/xray/clients
 
-# Генерируем ключи Reality
+# Генерируем ключи Reality (формат: PrivateKey: xxx, Password: yyy)
 KEYS=$(/usr/local/bin/xray x25519)
-PRIVATE_KEY=$(echo "$KEYS" | grep 'Private' | awk '{print $2}')
-PUBLIC_KEY=$(echo "$KEYS" | grep 'Public' | awk '{print $2}')
+PRIVATE_KEY=$(echo "$KEYS" | grep 'PrivateKey' | awk '{print $2}')
+PUBLIC_KEY=$(echo "$KEYS" | grep 'Password' | awk '{print $2}')
 
 echo "$PRIVATE_KEY" > /usr/local/etc/xray/private.key
 echo "$PUBLIC_KEY" > /usr/local/etc/xray/public.key
@@ -2153,26 +2159,44 @@ echo "PUBLIC_KEY:$PUBLIC_KEY"
                 public_key = ""
                 for line in result.stdout.split('\n'):
                     if line.startswith('PUBLIC_KEY:'):
-                        public_key = line.split(':')[1]
+                        public_key = line.split(':')[1].strip()
                         break
                 
                 await callback.message.edit_text(
-                    f"✅ *Xray установлен на {server['name']}*\n\n"
+                    f"✅ *Xray успешно установлен на {server['name']}*\n\n"
                     f"📍 Порт: 8443\n"
                     f"🔑 Public Key: `{public_key}`\n\n"
-                    f"Скрипты:\n"
-                    f"• /usr/local/bin/v2ray-new-conf.sh\n"
-                    f"• /usr/local/bin/v2ray-remove-client.sh",
+                    f"📂 Скрипты созданы:\n"
+                    f"• `/usr/local/bin/v2ray-new-conf.sh`\n"
+                    f"• `/usr/local/bin/v2ray-remove-client.sh`\n\n"
+                    f"🎉 V2Ray теперь доступен для создания конфигов!",
                     parse_mode="Markdown",
                     reply_markup=get_server_info_kb(ip, True)
                 )
             else:
+                # Показываем и stdout и stderr для диагностики
+                error_info = result.stderr[:300] if result.stderr else "Нет stderr"
+                stdout_info = result.stdout[-300:] if result.stdout else "Нет stdout"
                 await callback.message.edit_text(
-                    f"❌ Ошибка установки Xray\n\n{result.stderr[:500]}",
+                    f"❌ *Ошибка установки Xray*\n\n"
+                    f"📋 Последний вывод:\n`{stdout_info}`\n\n"
+                    f"⚠️ Ошибки:\n`{error_info}`",
+                    parse_mode="Markdown",
                     reply_markup=get_server_info_kb(ip, True)
                 )
+    except asyncssh.Error as e:
+        await callback.message.edit_text(
+            f"❌ *Ошибка SSH подключения*\n\n"
+            f"Сервер: {server['name']} ({ip})\n"
+            f"Ошибка: `{str(e)[:200]}`",
+            parse_mode="Markdown",
+            reply_markup=get_server_info_kb(ip, True)
+        )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка: {str(e)}",
+            f"❌ *Неизвестная ошибка*\n\n"
+            f"Тип: {type(e).__name__}\n"
+            f"Описание: `{str(e)[:200]}`",
+            parse_mode="Markdown",
             reply_markup=get_server_info_kb(ip, True)
         )
