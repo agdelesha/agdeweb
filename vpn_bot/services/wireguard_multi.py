@@ -1253,11 +1253,17 @@ echo "OK: $USERNAME removed"
         # Проверяем наличие скрипта
         script_check, _, _ = await cls._ssh_execute(server, "test -f /usr/local/bin/v2ray-remove-client.sh && echo 'OK'")
         if not script_check:
-            # Скрипт не найден — удаляем файлы вручную
-            logger.warning(f"Скрипт v2ray-remove-client.sh не найден на {server.name}, удаляем файлы вручную")
+            # Скрипт не найден — удаляем вручную из config.json и файлы
+            logger.warning(f"Скрипт v2ray-remove-client.sh не найден на {server.name}, удаляем вручную")
+            
+            # Удаляем пользователя из config.json
+            remove_cmd = f'''
+jq --arg email "{username}" '.inbounds[0].settings.clients = [.inbounds[0].settings.clients[] | select(.email != $email)]' /usr/local/etc/xray/config.json > /tmp/xray_config_tmp.json && mv /tmp/xray_config_tmp.json /usr/local/etc/xray/config.json && systemctl restart xray 2>/dev/null || true
+'''
+            await cls._ssh_execute(server, remove_cmd)
             
             # Удаляем файлы конфига
-            await cls._ssh_execute(server, f"rm -f /usr/local/etc/xray/clients/{username}.json /usr/local/etc/xray/clients/{username}.png 2>/dev/null || true")
+            await cls._ssh_execute(server, f"rm -f /usr/local/etc/xray/clients/{username}.txt /usr/local/etc/xray/clients/{username}.png 2>/dev/null || true")
             
             logger.info(f"V2Ray конфиг {username} удалён вручную с сервера {server.name}")
             return True, f"V2Ray конфиг удален с сервера {server.name}"
@@ -1272,8 +1278,12 @@ echo "OK: $USERNAME removed"
             logger.info(f"V2Ray конфиг {username} успешно удалён с сервера {server.name}")
             return True, f"V2Ray конфиг удален с сервера {server.name}"
         
-        # Если скрипт вернул ошибку — пробуем удалить вручную
+        # Если скрипт вернул ошибку — пробуем удалить вручную из config.json
         logger.warning(f"Скрипт вернул ошибку, удаляем вручную: {stderr}")
-        await cls._ssh_execute(server, f"rm -f /usr/local/etc/xray/clients/{username}.json /usr/local/etc/xray/clients/{username}.png 2>/dev/null || true")
+        remove_cmd = f'''
+jq --arg email "{username}" '.inbounds[0].settings.clients = [.inbounds[0].settings.clients[] | select(.email != $email)]' /usr/local/etc/xray/config.json > /tmp/xray_config_tmp.json && mv /tmp/xray_config_tmp.json /usr/local/etc/xray/config.json && systemctl restart xray 2>/dev/null || true
+'''
+        await cls._ssh_execute(server, remove_cmd)
+        await cls._ssh_execute(server, f"rm -f /usr/local/etc/xray/clients/{username}.txt /usr/local/etc/xray/clients/{username}.png 2>/dev/null || true")
         
         return True, f"V2Ray конфиг удален с сервера {server.name}"
