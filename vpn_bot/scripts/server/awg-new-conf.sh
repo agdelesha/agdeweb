@@ -45,11 +45,12 @@ CLIENT_IP="10.8.1.$NEW_IP"
 # Добавляем клиента в конфиг сервера
 cat >> $AWG_CONFIG << EOF
 
+# BEGIN_PEER $USERNAME
 [Peer]
-# $USERNAME
 PublicKey = $CLIENT_PUBLIC_KEY
 PresharedKey = $PRESHARED_KEY
 AllowedIPs = $CLIENT_IP/32
+# END_PEER $USERNAME
 EOF
 
 # Создаём конфиг клиента

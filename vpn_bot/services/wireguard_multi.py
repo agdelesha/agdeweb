@@ -537,6 +537,48 @@ rm /tmp/psk_{public_key[:8]}.key
         return success, "Конфиг включен" if success else stderr
     
     @classmethod
+    async def disable_v2ray_config(cls, config_name: str, server: Server) -> Tuple[bool, str]:
+        """Отключить V2Ray конфиг (disable в X-UI)"""
+        
+        if LOCAL_MODE:
+            return True, "Конфиг отключен (LOCAL_MODE)"
+        
+        logger.info(f"Отключение V2Ray конфига {config_name} на сервере {server.name}")
+        
+        success, stdout, stderr = await cls._ssh_execute(
+            server,
+            f"sudo /usr/local/bin/v2ray-disable-client.sh {config_name} disable"
+        )
+        
+        if success:
+            logger.info(f"V2Ray конфиг {config_name} успешно отключен на {server.name}")
+            return True, "Конфиг отключен"
+        else:
+            logger.error(f"Ошибка отключения V2Ray конфига на {server.name}: {stderr}")
+            return False, stderr or "Ошибка отключения"
+    
+    @classmethod
+    async def enable_v2ray_config(cls, config_name: str, server: Server) -> Tuple[bool, str]:
+        """Включить V2Ray конфиг (enable в X-UI)"""
+        
+        if LOCAL_MODE:
+            return True, "Конфиг включен (LOCAL_MODE)"
+        
+        logger.info(f"Включение V2Ray конфига {config_name} на сервере {server.name}")
+        
+        success, stdout, stderr = await cls._ssh_execute(
+            server,
+            f"sudo /usr/local/bin/v2ray-disable-client.sh {config_name} enable"
+        )
+        
+        if success:
+            logger.info(f"V2Ray конфиг {config_name} успешно включен на {server.name}")
+            return True, "Конфиг включен"
+        else:
+            logger.error(f"Ошибка включения V2Ray конфига на {server.name}: {stderr}")
+            return False, stderr or "Ошибка включения"
+    
+    @classmethod
     async def get_traffic_stats(cls, server: Server) -> Dict[str, Dict[str, int]]:
         """Получить статистику трафика с сервера"""
         

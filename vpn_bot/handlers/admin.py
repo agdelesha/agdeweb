@@ -669,7 +669,11 @@ async def admin_toggle_config(callback: CallbackQuery):
                 # Мультисервер - отключаем на удалённом сервере
                 server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
                 if server:
-                    success, msg = await WireGuardMultiService.disable_config(config.public_key, server)
+                    # Для V2Ray используем отдельную функцию
+                    if config.name.startswith("v2ray_") or getattr(config, 'protocol_type', '') == 'v2ray':
+                        success, msg = await WireGuardMultiService.disable_v2ray_config(config.name, server)
+                    else:
+                        success, msg = await WireGuardMultiService.disable_config(config.public_key, server)
                 else:
                     success, msg = True, "Сервер удалён"
             else:
@@ -689,9 +693,13 @@ async def admin_toggle_config(callback: CallbackQuery):
                 # Мультисервер - включаем на удалённом сервере
                 server = await WireGuardMultiService.get_server_by_id(session, config.server_id)
                 if server:
-                    success, msg = await WireGuardMultiService.enable_config(
-                        config.public_key, config.preshared_key, config.allowed_ips, server
-                    )
+                    # Для V2Ray используем отдельную функцию
+                    if config.name.startswith("v2ray_") or getattr(config, 'protocol_type', '') == 'v2ray':
+                        success, msg = await WireGuardMultiService.enable_v2ray_config(config.name, server)
+                    else:
+                        success, msg = await WireGuardMultiService.enable_config(
+                            config.public_key, config.preshared_key, config.allowed_ips, server
+                        )
                 else:
                     await callback.answer("❌ Сервер удалён, конфиг нельзя включить", show_alert=True)
                     return
@@ -4876,7 +4884,11 @@ async def admin_toggle_server_config(callback: CallbackQuery):
         if config.is_active:
             # Отключаем конфиг
             if cfg_server:
-                success, msg = await WireGuardMultiService.disable_config(config.public_key, cfg_server)
+                # Для V2Ray используем отдельную функцию
+                if config.name.startswith("v2ray_") or getattr(config, 'protocol_type', '') == 'v2ray':
+                    success, msg = await WireGuardMultiService.disable_v2ray_config(config.name, cfg_server)
+                else:
+                    success, msg = await WireGuardMultiService.disable_config(config.public_key, cfg_server)
             else:
                 success, msg = await WireGuardService.disable_config(config.public_key)
             
@@ -4890,9 +4902,13 @@ async def admin_toggle_server_config(callback: CallbackQuery):
         else:
             # Включаем конфиг
             if cfg_server:
-                success, msg = await WireGuardMultiService.enable_config(
-                    config.public_key, config.preshared_key, config.allowed_ips, cfg_server
-                )
+                # Для V2Ray используем отдельную функцию
+                if config.name.startswith("v2ray_") or getattr(config, 'protocol_type', '') == 'v2ray':
+                    success, msg = await WireGuardMultiService.enable_v2ray_config(config.name, cfg_server)
+                else:
+                    success, msg = await WireGuardMultiService.enable_config(
+                        config.public_key, config.preshared_key, config.allowed_ips, cfg_server
+                    )
             elif config.server_id:
                 await callback.answer("❌ Сервер удалён, конфиг нельзя включить", show_alert=True)
                 return

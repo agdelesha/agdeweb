@@ -1112,39 +1112,47 @@ async def funnel_protocol_selected(callback: CallbackQuery, bot: Bot):
 
 
 @router.callback_query(F.data == "get_vpn")
-async def get_vpn(callback: CallbackQuery):
+async def get_vpn(callback: CallbackQuery, state: FSMContext):
+    """Получить конфиг - сразу переходим к выбору протокола"""
     await callback.answer()
-    user = await get_user_by_telegram_id(callback.from_user.id)
-    show_trial = not user.trial_used if user else True
-    has_referral_discount = user and user.referrer_id and not user.first_payment_done
-    prices = await get_prices()
-    discount_percent = await get_referral_discount_percent()
     
-    if has_referral_discount:
-        d30 = prices['price_30'] * (100 - discount_percent) // 100
-        d90 = prices['price_90'] * (100 - discount_percent) // 100
-        d180 = prices['price_180'] * (100 - discount_percent) // 100
-        tariff_text = (
-            "📋 *Выбери тарифный план:*\n\n"
-            f"🎁 Пробный — {prices['trial_days']} дня бесплатно (один раз)\n"
-            f"📅 30 дней — *{d30}₽* вместо {prices['price_30']}₽ (скидка {discount_percent}%)\n"
-            f"📅 90 дней — *{d90}₽* вместо {prices['price_90']}₽ (скидка {discount_percent}%)\n"
-            f"📅 180 дней — *{d180}₽* вместо {prices['price_180']}₽ (скидка {discount_percent}%)"
+    # Показываем индикатор загрузки
+    await callback.message.edit_text(
+        "⏳ *Загрузка...*\n\nПроверяю доступные протоколы",
+        parse_mode="Markdown"
+    )
+    
+    # Проверяем доступные протоколы на серверах
+    from keyboards.user_kb import get_protocol_choice_kb
+    from services.wireguard_multi import WireGuardMultiService
+    
+    async with async_session() as session:
+        servers = await WireGuardMultiService.get_all_servers(session)
+        has_wg = len(servers) > 0
+        has_awg = False
+        has_v2ray = False
+        for srv in servers:
+            if await WireGuardMultiService.check_awg_available(srv):
+                has_awg = True
+            if await WireGuardMultiService.check_v2ray_available(srv):
+                has_v2ray = True
+    
+    if not has_wg and not has_awg and not has_v2ray:
+        await callback.message.edit_text(
+            "❌ Нет доступных серверов для создания конфига.\n\n"
+            "Напиши @agdelesha для помощи.",
+            parse_mode="Markdown",
+            reply_markup=get_main_menu_kb(callback.from_user.id, False)
         )
-    else:
-        tariff_text = (
-            "📋 *Выбери тарифный план:*\n\n"
-            f"🎁 Пробный — {prices['trial_days']} дня бесплатно (один раз)\n"
-            f"📅 30 дней — {prices['price_30']}₽\n"
-            f"📅 90 дней — {prices['price_90']}₽\n"
-            f"📅 180 дней — {prices['price_180']}₽"
-        )
+        return
     
     await callback.message.edit_text(
-        tariff_text,
+        "📱 *Получить конфиг*\n\n"
+        "Выбери тип подключения:",
         parse_mode="Markdown",
-        reply_markup=get_tariffs_kb(show_trial=show_trial, has_referral_discount=has_referral_discount, prices=prices)
+        reply_markup=get_protocol_choice_kb(has_wg=has_wg, has_awg=has_awg, has_v2ray=has_v2ray)
     )
+    await state.set_state(ConfigRequestStates.waiting_for_protocol)
 
 
 @router.callback_query(F.data == "extend_subscription")
@@ -2283,17 +2291,7 @@ async def request_extra_config(callback: CallbackQuery, state: FSMContext, bot: 
             await callback.answer("Ошибка: пользователь не найден", show_alert=True)
             return
         
-        has_active_sub = False
-        for sub in user.subscriptions:
-            if sub.expires_at is None or sub.expires_at > datetime.utcnow():
-                has_active_sub = True
-                break
-        
-        if not has_active_sub:
-            await callback.answer("❌ Нужна активная подписка для запроса конфига", show_alert=True)
-            return
-        
-        # Проверяем лимит конфигов
+        # Проверяем лимит конфигов (подписка НЕ требуется для создания конфига)
         current_configs = len(user.configs) if user.configs else 0
         
         # Сначала проверяем индивидуальный лимит пользователя
