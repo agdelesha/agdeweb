@@ -435,14 +435,29 @@ class WireGuardMultiService:
             return None
     
     @classmethod
-    async def delete_config(cls, username: str, server: Server, public_key: str = None) -> Tuple[bool, str]:
-        """Удалить конфиг с сервера"""
+    async def delete_config(cls, username: str, server: Server, public_key: str = None, protocol_type: str = "wg") -> Tuple[bool, str]:
+        """Удалить конфиг с сервера. Автоматически определяет тип протокола по имени или параметру."""
+        
+        # Определяем тип протокола по имени конфига если не указан явно
+        if protocol_type == "wg":
+            if username.startswith("v2ray_"):
+                protocol_type = "v2ray"
+            elif username.startswith("awg_"):
+                protocol_type = "awg"
+        
+        # Для V2Ray вызываем отдельный метод
+        if protocol_type == "v2ray":
+            return await cls.delete_v2ray_config(username, server)
+        
+        # Для AWG вызываем отдельный метод
+        if protocol_type == "awg":
+            return await cls.delete_awg_config(username, server)
         
         if LOCAL_MODE:
             logger.info(f"[LOCAL_MODE] Удаление конфига {username}")
             return True, "Конфиг удален (LOCAL_MODE)"
         
-        logger.info(f"Удаление конфига {username} с сервера {server.name}")
+        logger.info(f"Удаление WG конфига {username} с сервера {server.name}")
         
         # Сначала отключаем пир из активного WireGuard (если есть public_key)
         if public_key:

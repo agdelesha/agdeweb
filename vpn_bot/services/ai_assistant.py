@@ -145,6 +145,18 @@ V2Ray:
 Если не знаешь ответ — направь к @agdelesha."""
 
 
+MAIN_MENU_PROMPT = """Сгенерируй короткое приветствие для главного меню бота пользователю {user_name}.
+
+Сообщение должно быть:
+- Тёплым и живым, с обращением по имени
+- Кратким (2-3 предложения)
+- Упоминать что кнопками ниже можно управлять конфигами и подпиской
+- Предлагать задать вопрос AI-помощнику если что-то непонятно
+- БЕЗ Markdown разметки
+- Не используй слово VPN, говори "сервис" или "защищённое подключение"
+- Каждый раз немного по-разному"""
+
+
 TRIAL_ACTIVATED_PROMPT = """Сгенерируй короткое доброжелательное сообщение для пользователя {user_name}, который только что активировал пробный период в сервисе безопасного и свободного доступа к интернету.
 
 Сообщение должно быть:
@@ -169,9 +181,44 @@ WELCOME_INSTRUCTION_PROMPT = """Сгенерируй короткое добро
 
 Для WireGuard: скачать WireGuard, импортировать файл, включить
 Для AmneziaWG: скачать AmneziaVPN с amnezia.org/ru/downloads, импортировать файл, включить
-Для V2Ray: скачать приложение (V2RayNG/Streisand/V2RayN), скопировать ссылку, добавить в приложение, включить
+Для V2Ray: скачать V2RayTun из App Store (https://apps.apple.com/app/id6476628951) или с сайта v2raytun.com, скопировать ссылку, добавить в приложение, включить
 
 Не используй слово VPN. Говори "сетевой сервис" или "защищённое подключение"."""
+
+
+async def generate_main_menu_text(user_name: str) -> str:
+    """Генерирует текст главного меню через DeepSeek"""
+    try:
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        prompt = MAIN_MENU_PROMPT.format(user_name=user_name)
+        
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.9,
+            "max_tokens": 150
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                DEEPSEEK_API_URL,
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if "choices" in data and len(data["choices"]) > 0:
+                        return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        logger.error(f"Error generating main menu text: {e}")
+    
+    # Fallback
+    return f"{user_name}, рад тебя видеть! Управляй сервисом кнопками ниже. Если есть вопросы — просто напиши, AI-помощник на связи!"
 
 
 async def generate_trial_activated_message(user_name: str) -> str:
@@ -253,7 +300,7 @@ async def generate_welcome_instruction(protocol: str, device_name: str) -> str:
     fallback = {
         "wg": "Привет! Твой конфиг готов. Скачай приложение WireGuard из App Store или Google Play, открой полученный файл и включи соединение. Готово!",
         "awg": "Привет! Твой защищённый конфиг готов. Скачай AmneziaVPN с amnezia.org/ru/downloads, открой полученный файл и включи соединение. Готово!",
-        "v2ray": "Привет! Твоя ссылка для подключения готова. Скачай V2RayNG (Android), Streisand (iOS) или V2RayN (Windows), скопируй ссылку и добавь её в приложение. Включи соединение — готово!"
+        "v2ray": "Привет! Твоя ссылка для подключения готова. Скачай V2RayTun из App Store (https://apps.apple.com/app/id6476628951) или с v2raytun.com, скопируй ссылку и добавь её в приложение. Включи соединение — готово!"
     }
     return fallback.get(protocol, fallback["wg"])
 
