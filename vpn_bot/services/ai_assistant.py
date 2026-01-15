@@ -145,6 +145,17 @@ V2Ray:
 Если не знаешь ответ — направь к @agdelesha."""
 
 
+TRIAL_ACTIVATED_PROMPT = """Сгенерируй короткое доброжелательное сообщение для пользователя {user_name}, который только что активировал пробный период в сервисе безопасного и свободного доступа к интернету.
+
+Сообщение должно быть:
+- Тёплым и дружелюбным, с обращением по имени
+- Кратким (2-3 предложения)
+- Объяснять что пользователь получает доступ к сервису безопасного и свободного интернета
+- Заканчиваться призывом нажать кнопку "Получить" чтобы получить свой конфиг
+- БЕЗ Markdown разметки
+- Не используй слово VPN"""
+
+
 WELCOME_INSTRUCTION_PROMPT = """Сгенерируй короткое доброжелательное приветствие и инструкцию для нового пользователя, который только что получил свой первый конфиг.
 
 Протокол: {protocol}
@@ -161,6 +172,41 @@ WELCOME_INSTRUCTION_PROMPT = """Сгенерируй короткое добро
 Для V2Ray: скачать приложение (V2RayNG/Streisand/V2RayN), скопировать ссылку, добавить в приложение, включить
 
 Не используй слово VPN. Говори "сетевой сервис" или "защищённое подключение"."""
+
+
+async def generate_trial_activated_message(user_name: str) -> str:
+    """Генерирует приветствие при активации пробного периода через DeepSeek"""
+    try:
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        prompt = TRIAL_ACTIVATED_PROMPT.format(user_name=user_name)
+        
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.8,
+            "max_tokens": 200
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                DEEPSEEK_API_URL,
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if "choices" in data and len(data["choices"]) > 0:
+                        return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        logger.error(f"Error generating trial activated message: {e}")
+    
+    # Fallback
+    return f"{user_name}, добро пожаловать! Ты получаешь доступ к сервису безопасного и свободного интернета. Нажми кнопку «Получить» чтобы получить свой конфиг!"
 
 
 async def generate_welcome_instruction(protocol: str, device_name: str) -> str:

@@ -171,9 +171,7 @@ def get_trial_activated_kb() -> InlineKeyboardMarkup:
 
 def get_after_config_kb() -> InlineKeyboardMarkup:
     """Клавиатура после получения конфига (для пробного периода)"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Купить подписку", callback_data="funnel_tariffs")]
-    ])
+    return InlineKeyboardMarkup(inline_keyboard=[])
 
 
 def get_device_input_cancel_kb() -> InlineKeyboardMarkup:

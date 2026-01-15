@@ -446,8 +446,7 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         msg = await message.answer(
             f"Привет! 👋\n"
             f"Я помогу тебе подключиться к сервису\n\n"
-            f"💬 У меня есть встроенный AI-помощник — просто напиши любой вопрос в чат и я отвечу!\n\n"
-            f"Выбери:",
+            f"💬 У меня есть встроенный AI-помощник — просто напиши любой вопрос в чат и я отвечу!",
             parse_mode="Markdown",
             reply_markup=get_welcome_kb(show_trial=True)
         )
@@ -476,8 +475,7 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         msg = await message.answer(
             f"Привет! 👋\n"
             f"Я помогу тебе подключиться к сервису\n\n"
-            f"💬 У меня есть встроенный AI-помощник — просто напиши любой вопрос в чат и я отвечу!\n\n"
-            f"Выбери:",
+            f"💬 У меня есть встроенный AI-помощник — просто напиши любой вопрос в чат и я отвечу!",
             parse_mode="Markdown",
             reply_markup=get_welcome_kb(show_trial=show_trial)
         )
@@ -707,7 +705,9 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
         user = await get_user_by_telegram_id(callback.from_user.id)
         show_trial = not user.trial_used if user else True
         await callback.message.edit_text(
-            "Выбери:",
+            "Привет! 👋\n"
+            "Я помогу тебе подключиться к сервису\n\n"
+            "💬 У меня есть встроенный AI-помощник — просто напиши любой вопрос в чат и я отвечу!",
             parse_mode="Markdown",
             reply_markup=get_welcome_kb(show_trial=show_trial)
         )
@@ -831,7 +831,9 @@ async def how_to_understood(callback: CallbackQuery, bot: Bot):
         show_trial = not user.trial_used if user else True
         await bot.send_message(
             callback.from_user.id,
-            "Выбери:",
+            "Привет! 👋\n"
+            "Я помогу тебе подключиться к сервису\n\n"
+            "💬 У меня есть встроенный AI-помощник — просто напиши любой вопрос в чат и я отвечу!",
             parse_mode="Markdown",
             reply_markup=get_welcome_kb(show_trial=show_trial)
         )
@@ -856,9 +858,19 @@ async def funnel_trial(callback: CallbackQuery):
         )
         return
     
+    # Показываем загрузку пока генерируем сообщение
     await callback.message.edit_text(
-        "Отлично 👍 пробный доступ активирован!\n\n"
-        "Нажми кнопку «Получить»",
+        "⏳ Подготавливаю доступ...",
+        parse_mode="Markdown"
+    )
+    
+    # Генерируем приветствие через DeepSeek
+    from services.ai_assistant import generate_trial_activated_message
+    user_name = callback.from_user.first_name or "друг"
+    welcome_msg = await generate_trial_activated_message(user_name)
+    
+    await callback.message.edit_text(
+        f"✅ {welcome_msg}",
         parse_mode="Markdown",
         reply_markup=get_trial_activated_kb()
     )
@@ -897,6 +909,12 @@ async def funnel_get_config(callback: CallbackQuery, bot: Bot):
     
     from keyboards.user_kb import get_funnel_protocol_kb
     
+    # Показываем загрузку пока проверяем серверы
+    await callback.message.edit_text(
+        "⏳ Проверяю доступные протоколы...",
+        parse_mode="Markdown"
+    )
+    
     # Проверяем доступность протоколов на серверах
     has_wg = True
     has_awg = False
@@ -911,10 +929,10 @@ async def funnel_get_config(callback: CallbackQuery, bot: Bot):
                 has_v2ray = True
     
     await callback.message.edit_text(
-        "🔐 *Выбери уровень защиты:*\n\n"
+        "🌐 *Выбери уровень свободы:*\n\n"
         "🔒 *WireGuard* — простой и быстрый, подходит для большинства случаев\n\n"
         "🛡 *AmneziaWG* — с обфускацией трафика, если обычный не работает\n\n"
-        "🚀 *V2Ray* — маскируется под обычный сайт, максимальная защита",
+        "🚀 *V2Ray* — маскируется под обычный сайт, максимальная свобода",
         parse_mode="Markdown",
         reply_markup=get_funnel_protocol_kb(has_wg, has_awg, has_v2ray)
     )
@@ -1046,14 +1064,13 @@ async def funnel_protocol_selected(callback: CallbackQuery, bot: Bot):
     
     # Отправляем конфиг
     if protocol == "v2ray":
-        # Для V2Ray отправляем ссылку
-        vless_link = config_data.vless_link if hasattr(config_data, 'vless_link') else ""
+        # Для V2Ray отправляем ссылку (она хранится в config_content)
+        vless_link = config_data.config_content if hasattr(config_data, 'config_content') else ""
         await bot.send_message(
             callback.from_user.id,
             f"🔗 *Твоя ссылка для подключения:*\n\n`{vless_link}`\n\n"
             "Скопируй и добавь в приложение.",
-            parse_mode="Markdown",
-            reply_markup=get_after_config_kb()
+            parse_mode="Markdown"
         )
     elif protocol == "awg":
         # Для AWG отправляем текст конфига
