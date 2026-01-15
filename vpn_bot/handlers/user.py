@@ -457,13 +457,17 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     has_sub = await check_has_subscription(message.from_user.id)
     
     if has_sub:
-        # Есть подписка — главное меню с генерацией через DeepSeek
-        from services.ai_assistant import generate_main_menu_text
+        # Есть подписка — главное меню
         user_name = message.from_user.first_name or "друг"
-        menu_text = await generate_main_menu_text(user_name)
+        menu_text = (
+            f"Привет, {user_name}! 👋\n\n"
+            f"📱 *Конфиги* — твои подключения и QR-коды\n"
+            f"📊 *Подписка* — статус и продление\n\n"
+            f"💬 Есть вопросы? Просто напиши — AI-помощник на связи!"
+        )
         msg = await message.answer(
             menu_text,
-            parse_mode=None,
+            parse_mode="Markdown",
             reply_markup=get_main_menu_kb(message.from_user.id, True)
         )
     else:
@@ -687,12 +691,16 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     has_sub = await check_has_subscription(callback.from_user.id)
     
     if has_sub:
-        from services.ai_assistant import generate_main_menu_text
         user_name = callback.from_user.first_name or "друг"
-        menu_text = await generate_main_menu_text(user_name)
+        menu_text = (
+            f"Привет, {user_name}! 👋\n\n"
+            f"📱 *Конфиги* — твои подключения и QR-коды\n"
+            f"📊 *Подписка* — статус и продление\n\n"
+            f"💬 Есть вопросы? Просто напиши — AI-помощник на связи!"
+        )
         await callback.message.edit_text(
             menu_text,
-            parse_mode=None,
+            parse_mode="Markdown",
             reply_markup=get_main_menu_kb(callback.from_user.id, True)
         )
     else:
@@ -808,13 +816,17 @@ async def how_to_understood(callback: CallbackQuery, bot: Bot):
                     )
         
         # Отправляем главное меню
-        from services.ai_assistant import generate_main_menu_text
         user_name = callback.from_user.first_name or "друг"
-        menu_text = await generate_main_menu_text(user_name)
+        menu_text = (
+            f"Привет, {user_name}! 👋\n\n"
+            f"📱 *Конфиги* — твои подключения и QR-коды\n"
+            f"📊 *Подписка* — статус и продление\n\n"
+            f"💬 Есть вопросы? Просто напиши — AI-помощник на связи!"
+        )
         await bot.send_message(
             callback.from_user.id,
             menu_text,
-            parse_mode=None,
+            parse_mode="Markdown",
             reply_markup=get_main_menu_kb(callback.from_user.id, True, True)
         )
     else:
@@ -1084,13 +1096,17 @@ async def funnel_protocol_selected(callback: CallbackQuery, bot: Bot):
         )
     
     # Показываем главное меню
-    from services.ai_assistant import generate_main_menu_text
     user_name = callback.from_user.first_name or "друг"
-    menu_text = await generate_main_menu_text(user_name)
+    menu_text = (
+        f"Привет, {user_name}! 👋\n\n"
+        f"📱 *Конфиги* — твои подключения и QR-коды\n"
+        f"📊 *Подписка* — статус и продление\n\n"
+        f"💬 Есть вопросы? Просто напиши — AI-помощник на связи!"
+    )
     await bot.send_message(
         callback.from_user.id,
         menu_text,
-        parse_mode=None,
+        parse_mode="Markdown",
         reply_markup=get_main_menu_kb(callback.from_user.id, True)
     )
 
@@ -1229,13 +1245,17 @@ async def tariff_trial(callback: CallbackQuery, bot: Bot):
             caption=caption
         )
         
-        from services.ai_assistant import generate_main_menu_text
         user_name = callback.from_user.first_name or "друг"
-        menu_text = await generate_main_menu_text(user_name)
+        menu_text = (
+            f"Привет, {user_name}! 👋\n\n"
+            f"📱 *Конфиги* — твои подключения и QR-коды\n"
+            f"📊 *Подписка* — статус и продление\n\n"
+            f"💬 Есть вопросы? Просто напиши — AI-помощник на связи!"
+        )
         await bot.send_message(
             callback.from_user.id,
             menu_text,
-            parse_mode=None,
+            parse_mode="Markdown",
             reply_markup=get_main_menu_kb(callback.from_user.id, True)
         )
 
@@ -1668,12 +1688,16 @@ async def process_receipt(message: Message, state: FSMContext, bot: Bot):
                 caption=caption
             )
         
-        from services.ai_assistant import generate_main_menu_text
         user_name = message.from_user.first_name or "друг"
-        menu_text = await generate_main_menu_text(user_name)
+        menu_text = (
+            f"Привет, {user_name}! 👋\n\n"
+            f"📱 *Конфиги* — твои подключения и QR-коды\n"
+            f"📊 *Подписка* — статус и продление\n\n"
+            f"💬 Есть вопросы? Просто напиши — AI-помощник на связи!"
+        )
         await message.answer(
             menu_text,
-            parse_mode=None,
+            parse_mode="Markdown",
             reply_markup=get_main_menu_kb(user_telegram_id, True)
         )
         
